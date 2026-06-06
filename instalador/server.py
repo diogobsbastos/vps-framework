@@ -650,7 +650,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .track #bar{height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,#2bbd9e,#3ad6b0);box-shadow:0 0 12px rgba(43,189,158,.5);transition:width .45s}
 .go{flex:none;background:linear-gradient(90deg,#2bbd9e,#16a085);color:#04130d;border:none;border-radius:10px;padding:11px 28px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:0 6px 18px rgba(43,189,158,.35)}
 .go:disabled{opacity:.5;cursor:default}.go.uni{background:linear-gradient(90deg,#e06b6b,#c0392b);color:#fff}.go.done{background:linear-gradient(90deg,#3ad6b0,#16a085)}
-.modolink{flex:none;font-size:12px;color:#e08c8c;cursor:pointer;text-decoration:none;white-space:nowrap}
+.modolink{display:inline-block;margin-top:18px;font-size:12px;color:#e08c8c;cursor:pointer;text-decoration:none}
 .modolink:hover{text-decoration:underline}
 .hide{display:none}
 </style></head><body>
@@ -679,9 +679,10 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
       <label class=fld><span>Provedor <small>(rótulo no painel)</small></span><input id=prov type=text value="GCP" placeholder="GCP / Oracle / Hetzner..."></label>
       <label class=fld><span>Domínio <small>(opcional; vazio = acesso por IP)</small></span><input id=dom type=text placeholder="meuapp.duckdns.org"></label>
     </div>
+    <a id=modolink class=modolink onclick="removerTudo()">🗑️ Remover tudo (limpar a VM)</a>
   </div>
   <div class=right>
-    <div class=rhead><span id=rhead-txt>Componentes a instalar</span><span class=rhactions id=rhactions><a onclick="marcarTodos(1)">marcar todos</a> · <a onclick="marcarTodos(0)">limpar</a></span></div>
+    <div class=rhead><span id=rhead-txt>Componentes a instalar</span><span class=rhactions id=rhactions><a onclick="marcarTodos(1)">MARCAR TODOS</a> · <a onclick="marcarTodos(0)">LIMPAR</a></span></div>
     <div class=rbody>
       <div id=pick>__CHECKBOXES__</div>
       <div id=uni class=hide><div style="border:1px solid rgba(224,107,107,.4);background:rgba(224,107,107,.08);border-radius:10px;padding:14px 16px;font-size:13px;color:#f3c0c0;line-height:1.7"><b style="color:#ff9b9b"><i class="ti ti-alert-triangle"></i> Isto remove TODO o framework desta VM</b><br>Para e apaga: painel, PostgreSQL, PostgREST, MCP, Gateway, Webhook, Sentinela, ntfy, Evolution, Backend Central, provisionador, rotas Nginx e o banco <code>evolution</code>.<br><span style="color:#9fb0a8">A VM volta <b>limpa, do zero</b>. O código no GitHub e teus backups <b>não</b> são tocados.</span></div></div>
@@ -690,9 +691,8 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
   </div>
   </div>
   <div class=footbar>
-    <button class=go id=go onclick=start()>Instalar</button>
     <div class=prog><div class=prow><span id=sl>Pronto para instalar</span><span id=pct>0%</span></div><div class=track><div id=bar></div></div></div>
-    <a id=modolink class=modolink onclick="removerTudo()">🗑️ Remover tudo (limpar a VM)</a>
+    <button class=go id=go onclick=start()>Instalar</button>
   </div>
 </div>
 <script>
