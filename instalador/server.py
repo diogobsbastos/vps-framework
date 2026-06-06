@@ -632,8 +632,8 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .fld input{width:100%;padding:9px 11px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(5,12,10,.6);color:#dfeae6;font-size:13px}
 .right{flex:1;min-width:0;display:flex;flex-direction:column;background:rgba(8,18,16,.6);backdrop-filter:blur(11px);border:1px solid rgba(43,189,158,.2);border-radius:16px;overflow:hidden}
 .rhead{padding:13px 22px 11px;font-size:11.5px;text-transform:uppercase;letter-spacing:1.3px;color:#7fb8ac;border-bottom:1px solid rgba(255,255,255,.07);display:flex;justify-content:space-between;align-items:center}
-.rhactions a{color:#7fb8ac;cursor:pointer;font-size:11px;text-transform:none;letter-spacing:0}
-.rhactions a:hover{color:#2bbd9e;text-decoration:underline}
+.rhactions button{background:rgba(43,189,158,.1);color:#7fb8ac;border:1px solid rgba(43,189,158,.3);border-radius:6px;cursor:pointer;font-size:10.5px;letter-spacing:.5px;padding:4px 9px;margin-left:6px}
+.rhactions button:hover{background:rgba(43,189,158,.2);color:#eafff9}
 .rbody{flex:1;overflow-y:auto;overflow-x:hidden;padding:14px 22px}
 .cmp{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid rgba(255,255,255,.08);border-radius:9px;margin-bottom:7px;cursor:pointer;font-size:13.5px;background:rgba(8,18,16,.45)}
 .cmp:hover{border-color:rgba(43,189,158,.4)}.cmp input{width:16px;height:16px;accent-color:#2bbd9e;flex:none}
@@ -701,7 +701,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
     </div>
   </div>
   <div class=right>
-    <div class=rhead><span id=rhead-txt>Componentes a instalar</span><span class=rhactions id=rhactions><a onclick="marcarTodos(1)">MARCAR TODOS</a> · <a onclick="marcarTodos(0)">LIMPAR</a></span></div>
+    <div class=rhead><span id=rhead-txt>Componentes a instalar</span><span class=rhactions id=rhactions><button type=button onclick="marcarTodos(1)">MARCAR TODOS</button><button type=button onclick="marcarTodos(0)">LIMPAR</button></span></div>
     <div class=rbody>
       <div id=pick>__CHECKBOXES__</div>
       <div id=uni class=hide><div style="border:1px solid rgba(224,107,107,.4);background:rgba(224,107,107,.08);border-radius:10px;padding:14px 16px;font-size:13px;color:#f3c0c0;line-height:1.7"><b style="color:#ff9b9b"><i class="ti ti-alert-triangle"></i> Isto remove TODO o framework desta VM</b><br>Para e apaga: painel, PostgreSQL, PostgREST, MCP, Gateway, Webhook, Sentinela, ntfy, Evolution, Backend Central, provisionador, rotas Nginx e o banco <code>evolution</code>.<br><span style="color:#9fb0a8">A VM volta <b>limpa, do zero</b>. O código no GitHub e teus backups <b>não</b> são tocados.</span></div></div>
@@ -728,13 +728,11 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 </div>
 <script>
 var KEY=new URLSearchParams(location.search).get("key")||"";var IP="__IP__";var MODO="instalar";
-function toggleModo(){modo(MODO=='instalar'?'desinstalar':'instalar');}
 function modo(m){MODO=m;
  document.getElementById('cfg').classList.toggle('hide',m=='desinstalar');
  document.getElementById('pick').classList.toggle('hide',m=='desinstalar');
  document.getElementById('uni').classList.toggle('hide',m!='desinstalar');
  document.getElementById('rhead-txt').textContent=m=='instalar'?'Componentes a instalar':'Remover tudo desta VM';
- var ml=document.getElementById('modolink');ml.textContent=m=='instalar'?'🗑️ Remover tudo (limpar a VM)':'← Voltar pra instalação';ml.style.color=m=='instalar'?'#e08c8c':'#7fb8ac';
  var g=document.getElementById('go');g.textContent=m=='instalar'?'Instalar':'Remover tudo';g.className=m=='instalar'?'go':'go uni';}
 function marcarTodos(v){[].slice.call(document.querySelectorAll('#pick input:not([disabled])')).forEach(function(x){x.checked=!!v;});}
 function sel(){return [].slice.call(document.querySelectorAll('#pick input:checked')).map(function(x){return x.value;});}
