@@ -115,7 +115,7 @@ def _detectar_ip_pub():
     except Exception:
         return "SEU-IP"
 IP_PUB = _detectar_ip_pub()
-VERSAO = "v0.10.0"
+VERSAO = "v0.10.1"
 try:
     import datetime as _dt
     try:
@@ -867,15 +867,15 @@ def checkboxes_html():
         badge = ""
         if st == "ativo":           # ja instalado e rodando -> nao remarca, mas pode reparar
             mark, dis = "", ""
-            badge = "<span class='bg bg-ok'>✓ instalado</span>"
+            badge = "<span class='cb cb-ok'>✓ instalado</span>"
         elif st == "inativo":       # instalado mas parado -> marca pra reparar
             mark, dis = "checked", ("disabled" if obrig else "")
-            badge = "<span class='bg bg-warn'>⚠ parado</span>"
+            badge = "<span class='cb cb-warn'>⚠ parado</span>"
         else:                       # ausente ou etapa sem deteccao (detectar/sistema)
             mark = "checked" if (cid in PADRAO_MARCADOS or obrig) else ""
             dis = "disabled" if obrig else ""
             if st == "ausente":
-                badge = "<span class='bg bg-new'>instalar</span>"
+                badge = "<span class='cb cb-new'>instalar</span>"
         out.append(
             f"<label class='cmp'><input type='checkbox' value='{cid}' {mark} {dis}>"
             f"<i class='ti {icon}'></i><span>{label}{tag}</span>{badge}</label>")
@@ -932,10 +932,10 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .cmp{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid rgba(255,255,255,.08);border-radius:9px;margin-bottom:7px;cursor:pointer;font-size:13.5px;background:rgba(8,18,16,.45)}
 .cmp:hover{border-color:rgba(43,189,158,.4)}.cmp input{width:16px;height:16px;accent-color:#2bbd9e;flex:none}
 .cmp i{font-size:18px;color:#5f897e;flex:none}.cmp span{flex:1;min-width:0}.cmp .req{color:#5f897e;font-size:11px;margin-left:4px}
-.bg{font-size:10px;padding:2px 9px;border-radius:99px;font-weight:600;letter-spacing:.3px;white-space:nowrap;flex:none}
-.bg-ok{background:rgba(43,189,158,.13);color:#3ad6b0;border:1px solid rgba(43,189,158,.33)}
-.bg-warn{background:rgba(239,107,107,.12);color:#ff9b9b;border:1px solid rgba(239,107,107,.4)}
-.bg-new{background:rgba(127,184,172,.10);color:#9fd4c8;border:1px solid rgba(127,184,172,.28)}
+.cb{font-size:10px;padding:2px 9px;border-radius:99px;font-weight:600;letter-spacing:.3px;white-space:nowrap;flex:none}
+.cb-ok{background:rgba(43,189,158,.13);color:#3ad6b0;border:1px solid rgba(43,189,158,.33)}
+.cb-warn{background:rgba(239,107,107,.12);color:#ff9b9b;border:1px solid rgba(239,107,107,.4)}
+.cb-new{background:rgba(127,184,172,.10);color:#9fd4c8;border:1px solid rgba(127,184,172,.28)}
 .steps{display:flex;flex-direction:column;gap:4px;margin-bottom:10px;flex:none;max-height:42%;overflow-y:auto}
 .st{display:flex;align-items:center;gap:9px;font-size:12.5px;color:#8fb0a8;padding:5px 7px;border-radius:7px}
 .st.run{color:#eafff9;background:rgba(43,189,158,.10)}.st.ok{color:#dfeae6}.st span{flex:1;min-width:0}.st .ic{font-size:14px;flex:none}
