@@ -186,16 +186,25 @@ def p_postgres():
 
 
 def p_postgrest():
-    sh('V=$(curl -fsSL https://api.github.com/repos/PostgREST/postgrest/releases/latest '
-       '| grep -oP \'"tag_name":\\s*"v\\K[^"]+\'); '
-       f'curl -fsSL "https://github.com/PostgREST/postgrest/releases/download/v${{V}}/postgrest-v${{V}}-{DET["pg_arch"]}.tar.xz" '
-       '-o /tmp/postgrest.tar.xz; tar -C /usr/local/bin -xf /tmp/postgrest.tar.xz; chmod +x /usr/local/bin/postgrest')
+    arch_kw = "x64|amd64" if DET.get("arch") in ("x86_64", "amd64") else "aarch64|arm64"
+    sh('set -e; URL=$(curl -fsSL https://api.github.com/repos/PostgREST/postgrest/releases/latest '
+       '| grep -o \'"browser_download_url": *"[^"]*"\' | sed -E \'s/.*"(http[^"]+)"/\\1/\' '
+       f'| grep -iE "linux|ubuntu" | grep -iE "{arch_kw}" | grep -iE "tar" | head -1); '
+       'echo "PostgREST asset: $URL"; test -n "$URL"; '
+       'curl -fsSL "$URL" -o /tmp/pgrst.tar.xz; tar -C /usr/local/bin -xf /tmp/pgrst.tar.xz; '
+       'chmod +x /usr/local/bin/postgrest; /usr/local/bin/postgrest --version')
+    sh(como_user(f"test -s {HOME}/.postgrest_pass || (openssl rand -hex 16 > {HOME}/.postgrest_pass; chmod 600 {HOME}/.postgrest_pass)"))
     sh(como_user(f"test -s {HOME}/.postgrest_jwt_secret || (openssl rand -hex 32 > {HOME}/.postgrest_jwt_secret; chmod 600 {HOME}/.postgrest_jwt_secret)"))
-    conf = (f"db-uri = \"postgres://postgres@/postgres\"\n"
-            f"db-schemas = \"public\"\n"
-            f"db-anon-role = \"postgres\"\n"
-            f"server-port = 3001\n")
-    sh(como_user(f"printf '{conf}' > {HOME}/postgrest.conf"))
+    pw = "DRYPASS" if DRY else subprocess.run(f"cat {HOME}/.postgrest_pass", shell=True, capture_output=True, text=True).stdout.strip()
+    sh("sudo -u postgres psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='anon'\" | grep -q 1 || sudo -u postgres psql -c \"CREATE ROLE anon NOLOGIN\"")
+    sh(f"sudo -u postgres psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='authenticator'\" | grep -q 1 || sudo -u postgres psql -c \"CREATE ROLE authenticator LOGIN NOINHERIT PASSWORD '{pw}'\"")
+    sh(f"sudo -u postgres psql -c \"ALTER ROLE authenticator PASSWORD '{pw}'\"")
+    sh("sudo -u postgres psql -c \"GRANT anon TO authenticator\"")
+    conf = (f'db-uri = "postgres://authenticator:{pw}@localhost:5432/postgres"\n'
+            'db-schemas = "public"\n'
+            'db-anon-role = "anon"\n'
+            'server-port = 3001\n')
+    sh(como_user(f"cat > {HOME}/postgrest.conf <<'PGRST'\n{conf}PGRST"))
     unit = f"""[Unit]
 Description=PostgREST (API do banco interno)
 After=postgresql.service network.target
@@ -208,8 +217,7 @@ RestartSec=3
 WantedBy=multi-user.target
 """
     sh(f"cat > /etc/systemd/system/postgrest.service <<'U'\n{unit}U")
-    sh("systemctl daemon-reload && systemctl enable --now postgrest || true")
-
+    sh("systemctl daemon-reload && systemctl enable postgrest && systemctl restart postgrest || true")
 
 def _venv(pasta: str, req_rel: str):
     """Cria venv e instala libs travadas (lock) da pasta clonada."""
@@ -223,6 +231,7 @@ def _venv(pasta: str, req_rel: str):
 def p_painel():
     d = f"{HOME}/vps-admin"
     sh(como_user(f"mkdir -p {d} && cp -rf {CLONE}/. {d}/ && rm -rf {d}/.git {d}/instalador"))
+    sh(como_user(f"[ -d {d}/infra ] && cp -f {d}/infra/*.py {d}/infra/*.sh {d}/ 2>/dev/null; true"))
     if os.path.isdir(OVERRIDE_DIR):
         sh(f'cp -rf "{OVERRIDE_DIR}/." "{d}/" && chown -R {ALVO_USER}:{ALVO_USER} "{d}"')
         emit({"tipo": "log", "msg": "overlay aplicado (app.py parametrizado)"})
@@ -359,26 +368,27 @@ def p_ntfy():
        'V=$(curl -fsSL https://api.github.com/repos/binwiederhier/ntfy/releases/latest | grep -oP \'"tag_name":\\s*"v\\K[^"]+\'); '
        'curl -fsSL "https://github.com/binwiederhier/ntfy/releases/download/v${V}/ntfy_${V}_linux_${ARCH}.tar.gz" -o /tmp/ntfy.tgz; '
        'tar -C /tmp -xzf /tmp/ntfy.tgz; cp /tmp/ntfy_*/ntfy /usr/local/bin/ntfy; chmod +x /usr/local/bin/ntfy')
+    sh("mkdir -p /etc/ntfy /var/cache/ntfy")
+    sh("printf 'base-url: http://127.0.0.1:2586\\nlisten-http: \":2586\"\\ncache-file: /var/cache/ntfy/cache.db\\n' > /etc/ntfy/server.yml")
     unit = """[Unit]
 Description=ntfy (push proprio)
 After=network.target
 [Service]
-ExecStart=/usr/local/bin/ntfy serve
+ExecStart=/usr/local/bin/ntfy serve --config /etc/ntfy/server.yml
 Restart=always
 RestartSec=3
 [Install]
 WantedBy=multi-user.target
 """
     sh(f"cat > /etc/systemd/system/ntfy.service <<'U'\n{unit}U")
-    sh("systemctl daemon-reload && systemctl enable --now ntfy || true")
-
+    sh("systemctl daemon-reload && systemctl enable ntfy && systemctl restart ntfy || true")
 
 def p_evolution():
     sh("curl -fsSL https://deb.nodesource.com/setup_22.x | bash -")
     sh("export DEBIAN_FRONTEND=noninteractive; apt-get install -y nodejs")
     sh(como_user(f"rm -rf {HOME}/evolution-api && git clone --depth 1 "
                  f"https://github.com/EvolutionAPI/evolution-api.git {HOME}/evolution-api"))
-    sh(como_user(f"cd {HOME}/evolution-api && npm install --omit=dev || npm install"))
+    sh(como_user(f"cd {HOME}/evolution-api && npm install --omit=dev --no-audit --no-fund || npm install --omit=dev --force || true"))
     emit({"tipo": "log", "msg": "Evolution instalada — configure .env e DATABASE pelo painel depois."})
 
 
