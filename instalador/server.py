@@ -613,61 +613,59 @@ def pagina():
 <title>VPS Admin · Instalador</title>
 <link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/3.34.0/iconfont/tabler-icons.min.css">
 <style>
+*,*::before,*::after{box-sizing:border-box}
 html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;font-family:system-ui,Segoe UI,sans-serif}
 .bg{position:fixed;inset:0;width:100%;height:100%;z-index:0}
-.shell{position:relative;z-index:2;height:100vh;display:flex;flex-direction:column;align-items:center}
-.brand{text-align:center;padding:24px 16px 6px}
-.emblem{width:58px;height:58px;margin:0 auto 9px;border-radius:16px;border:1px solid rgba(43,189,158,.45);background:rgba(43,189,158,.12);display:flex;align-items:center;justify-content:center}
-.emblem i{font-size:29px;color:#3ad6b0}
-.brand h1{margin:0;font-size:25px;font-weight:700;letter-spacing:3px;background:linear-gradient(180deg,#eafff9,#5f897e);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.brand p{margin:4px 0 0;font-size:11.5px;letter-spacing:2px;color:#7fb8ac;text-transform:uppercase}
-.panel{flex:1;width:100%;max-width:480px;overflow:auto;padding:12px 18px}
-.tabs{display:flex;gap:6px;margin-bottom:13px}
+.shell{position:relative;z-index:2;height:100vh;display:flex;gap:22px;padding:26px}
+.left{flex:0 0 36%;max-width:420px;min-width:300px;display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden}
+.emblem{width:62px;height:62px;border-radius:15px;border:1px solid rgba(43,189,158,.45);background:rgba(43,189,158,.12);display:flex;align-items:center;justify-content:center;margin-bottom:12px}
+.emblem i{font-size:28px;color:#3ad6b0}
+.left h1{margin:0;font-size:25px;font-weight:700;letter-spacing:3px;background:linear-gradient(180deg,#eafff9,#5f897e);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.left .tag{margin:5px 0 0;font-size:11px;letter-spacing:1.6px;color:#7fb8ac;text-transform:uppercase}
+.tabs{display:flex;gap:6px;margin:22px 0 14px}
 .tab{flex:1;text-align:center;padding:9px;border:1px solid rgba(255,255,255,.12);border-radius:9px;cursor:pointer;font-size:13px;color:#8fb0a8}
 .tab.on{border-color:#2bbd9e;color:#eafff9;background:rgba(43,189,158,.08)}
-.fld{display:block;margin-bottom:9px;font-size:12.5px;color:#8fb0a8}
+.fld{display:block;margin-bottom:10px;font-size:12.5px;color:#8fb0a8}
 .fld span{display:block;margin-bottom:4px}.fld small{color:#5f897e}
 .fld input{width:100%;padding:9px 11px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(5,12,10,.6);color:#dfeae6;font-size:13px}
-.cmp{display:flex;align-items:center;gap:10px;padding:8px 11px;border:1px solid rgba(255,255,255,.08);border-radius:9px;margin-bottom:6px;cursor:pointer;font-size:13.5px;background:rgba(8,18,16,.45)}
-.cmp:hover{border-color:rgba(43,189,158,.4)}.cmp input{width:16px;height:16px;accent-color:#2bbd9e}
-.cmp i{font-size:18px;color:#5f897e}.cmp .req{color:#5f897e;font-size:11px;margin-left:4px}
+.right{flex:1;min-width:0;display:flex;flex-direction:column;background:rgba(8,18,16,.6);backdrop-filter:blur(11px);border:1px solid rgba(43,189,158,.2);border-radius:16px;overflow:hidden}
+.rhead{padding:15px 22px 11px;font-size:11.5px;text-transform:uppercase;letter-spacing:1.3px;color:#7fb8ac;border-bottom:1px solid rgba(255,255,255,.07)}
+.rbody{flex:1;overflow-y:auto;overflow-x:hidden;padding:14px 22px}
+.cmp{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid rgba(255,255,255,.08);border-radius:9px;margin-bottom:7px;cursor:pointer;font-size:13.5px;background:rgba(8,18,16,.45)}
+.cmp:hover{border-color:rgba(43,189,158,.4)}.cmp input{width:16px;height:16px;accent-color:#2bbd9e;flex:none}
+.cmp i{font-size:18px;color:#5f897e;flex:none}.cmp span{flex:1;min-width:0}.cmp .req{color:#5f897e;font-size:11px;margin-left:4px}
 .steps{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
-.st{display:flex;align-items:center;gap:9px;font-size:12.5px;color:#8fb0a8;padding:4px 6px;border-radius:7px}
-.st.run{color:#eafff9;background:rgba(43,189,158,.10)}.st.ok{color:#dfeae6}.st .ic{font-size:14px;margin-left:auto}
+.st{display:flex;align-items:center;gap:9px;font-size:12.5px;color:#8fb0a8;padding:5px 7px;border-radius:7px}
+.st.run{color:#eafff9;background:rgba(43,189,158,.10)}.st.ok{color:#dfeae6}.st span{flex:1;min-width:0}.st .ic{font-size:14px;flex:none}
 .st.ok .ic{color:#3ad6b0}.st.run .ic{color:#2bbd9e}.st.erro .ic{color:#ef6b6b}
-.log{background:rgba(5,12,10,.7);border:1px solid rgba(255,255,255,.08);border-radius:9px;padding:9px;height:120px;overflow:auto;font-family:ui-monospace,monospace;font-size:11px;color:#9fb0a8;white-space:pre-wrap}
-.dock{width:100%;background:rgba(5,12,10,.85);backdrop-filter:blur(10px);border-top:1px solid rgba(43,189,158,.18);padding:13px 22px;display:flex;align-items:center;gap:18px}
-.go{background:linear-gradient(90deg,#2bbd9e,#16a085);color:#04130d;border:none;border-radius:10px;padding:11px 26px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:0 6px 18px rgba(43,189,158,.35)}
-.go:disabled{opacity:.5;cursor:default}.go.uni{background:linear-gradient(90deg,#e06b6b,#c0392b);color:#fff}
-.go.done{background:linear-gradient(90deg,#3ad6b0,#16a085)}
-.prog{flex:1}.prow{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:7px}
-.prow #sl{color:#bfe0d7}.prow #pct{color:#2bbd9e;font-weight:600;font-variant-numeric:tabular-nums}
+.log{background:rgba(5,12,10,.7);border:1px solid rgba(255,255,255,.08);border-radius:9px;padding:9px;height:150px;overflow:auto;font-family:ui-monospace,monospace;font-size:11px;color:#9fb0a8;white-space:pre-wrap}
+.foot{border-top:1px solid rgba(43,189,158,.18);padding:14px 22px;display:flex;align-items:center;gap:16px}
+.prog{flex:1;min-width:0}.prow{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:7px}
+.prow #sl{color:#bfe0d7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.prow #pct{color:#2bbd9e;font-weight:600;font-variant-numeric:tabular-nums;flex:none;margin-left:10px}
 .track{height:8px;background:rgba(255,255,255,.08);border-radius:99px;overflow:hidden}
 .track #bar{height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,#2bbd9e,#3ad6b0);box-shadow:0 0 12px rgba(43,189,158,.5);transition:width .45s}
+.go{flex:none;background:linear-gradient(90deg,#2bbd9e,#16a085);color:#04130d;border:none;border-radius:10px;padding:11px 28px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:0 6px 18px rgba(43,189,158,.35)}
+.go:disabled{opacity:.5;cursor:default}.go.uni{background:linear-gradient(90deg,#e06b6b,#c0392b);color:#fff}.go.done{background:linear-gradient(90deg,#3ad6b0,#16a085)}
 .hide{display:none}
 </style></head><body>
 <svg class=bg viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid slice">
  <defs>
-  <radialGradient id="glow" cx="40%" cy="35%" r="62%"><stop offset="0%" stop-color="#1d5f55" stop-opacity=".5"/><stop offset="100%" stop-color="#1d5f55" stop-opacity="0"/></radialGradient>
+  <radialGradient id="glow" cx="30%" cy="35%" r="62%"><stop offset="0%" stop-color="#1d5f55" stop-opacity=".5"/><stop offset="100%" stop-color="#1d5f55" stop-opacity="0"/></radialGradient>
   <linearGradient id="bgg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0a1614"/><stop offset="50%" stop-color="#0c1f1c"/><stop offset="100%" stop-color="#081310"/></linearGradient>
   <linearGradient id="steel" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#2a3a37"/><stop offset="45%" stop-color="#15211f"/><stop offset="100%" stop-color="#0c1513"/></linearGradient>
   <linearGradient id="teal" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#2bbd9e"/><stop offset="100%" stop-color="#0e6e5c"/></linearGradient>
  </defs>
  <rect width="1000" height="600" fill="url(#bgg)"/><rect width="1000" height="600" fill="url(#glow)"/>
- <path d="M-50 130 C 250 50 430 250 730 130 S 1100 70 1080 280 L 1080 -40 L -50 -40 Z" fill="url(#steel)" opacity=".65"/>
- <path d="M-50 510 C 220 600 470 400 700 510 S 1060 580 1080 460 L 1080 660 L -50 660 Z" fill="url(#steel)" opacity=".7"/>
- <path d="M0 330 C 200 280 380 390 580 330" stroke="url(#teal)" stroke-width="2" fill="none" opacity=".45"/>
- <path d="M640 270 h130 l26 26 v95" stroke="#1f8f78" stroke-width="1.5" fill="none" opacity=".55"/>
- <path d="M60 470 C 92 418 154 418 180 386 C 174 450 122 492 60 470 Z" fill="url(#steel)" stroke="#2bbd9e" stroke-width="1" stroke-opacity=".5"/>
- <path d="M950 120 C 918 172 856 172 830 204 C 836 140 888 98 950 120 Z" fill="url(#steel)" stroke="#2bbd9e" stroke-width="1" stroke-opacity=".5"/>
+ <path d="M-50 130 C 250 50 430 250 730 130 S 1100 70 1080 280 L 1080 -40 L -50 -40 Z" fill="url(#steel)" opacity=".6"/>
+ <path d="M-50 510 C 220 600 470 400 700 510 S 1060 580 1080 460 L 1080 660 L -50 660 Z" fill="url(#steel)" opacity=".65"/>
+ <path d="M650 270 h130 l26 26 v95" stroke="#1f8f78" stroke-width="1.5" fill="none" opacity=".5"/>
+ <path d="M940 130 C 908 182 846 182 820 214 C 826 150 878 108 940 130 Z" fill="url(#steel)" stroke="#2bbd9e" stroke-width="1" stroke-opacity=".5"/>
 </svg>
 <div class=shell>
-  <div class=brand>
-    <div class=emblem><i class="ti ti-server-bolt"></i></div>
+  <div class=left>
+    <div class=emblem><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#3ad6b0" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="4" width="18" height="6.2" rx="1.6"/><rect x="3" y="13.8" width="18" height="6.2" rx="1.6"/><circle cx="6.6" cy="7.1" r="1" fill="#3ad6b0" stroke="none"/><circle cx="6.6" cy="16.9" r="1" fill="#3ad6b0" stroke="none"/><line x1="10" y1="7.1" x2="17.5" y2="7.1"/><line x1="10" y1="16.9" x2="17.5" y2="16.9"/></svg></div>
     <h1>VPS ADMIN</h1>
-    <p>Sua central de servidor · completa e pré-moldada</p>
-  </div>
-  <div class=panel>
+    <div class=tag>Sua central de servidor · completa e pré-moldada</div>
     <div class=tabs><div class="tab on" id=tab-inst onclick="modo('instalar')">Instalar</div><div class=tab id=tab-uni onclick="modo('desinstalar')">Remover tudo</div></div>
     <div id=cfg>
       <label class=fld><span>Repo do código (privado)</span><input id=repo type=text value="https://github.com/diogobsbastos/vps-escola-parque-admin.git"></label>
@@ -675,12 +673,17 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
       <label class=fld><span>Provedor <small>(rótulo no painel)</small></span><input id=prov type=text value="GCP" placeholder="GCP / Oracle / Hetzner..."></label>
       <label class=fld><span>Domínio <small>(opcional; vazio = acesso por IP)</small></span><input id=dom type=text placeholder="meuapp.duckdns.org"></label>
     </div>
-    <div id=pick>__CHECKBOXES__</div>
-    <div id=run class=hide><div class=steps id=steps></div><div class=log id=log></div></div>
   </div>
-  <div class=dock>
-    <button class=go id=go onclick=start()>Instalar</button>
-    <div class=prog><div class=prow><span id=sl>Pronto para instalar</span><span id=pct>0%</span></div><div class=track><div id=bar></div></div></div>
+  <div class=right>
+    <div class=rhead id=rhead>Componentes a instalar</div>
+    <div class=rbody>
+      <div id=pick>__CHECKBOXES__</div>
+      <div id=run class=hide><div class=steps id=steps></div><div class=log id=log></div></div>
+    </div>
+    <div class=foot>
+      <div class=prog><div class=prow><span id=sl>Pronto para instalar</span><span id=pct>0%</span></div><div class=track><div id=bar></div></div></div>
+      <button class=go id=go onclick=start()>Instalar</button>
+    </div>
   </div>
 </div>
 <script>
@@ -689,12 +692,13 @@ function modo(m){MODO=m;document.getElementById('tab-inst').classList.toggle('on
  document.getElementById('tab-uni').classList.toggle('on',m=='desinstalar');
  document.getElementById('cfg').classList.toggle('hide',m=='desinstalar');
  document.getElementById('pick').classList.toggle('hide',m=='desinstalar');
+ document.getElementById('rhead').textContent=m=='instalar'?'Componentes a instalar':'Vai remover todos os serviços e pastas';
  var g=document.getElementById('go');g.textContent=m=='instalar'?'Instalar':'Remover tudo';g.className=m=='instalar'?'go':'go uni';}
 function sel(){return [].slice.call(document.querySelectorAll('#pick input:checked')).map(function(x){return x.value;});}
 function start(){var go=document.getElementById('go');go.disabled=true;
  if(MODO=='desinstalar'&&!confirm('Remover TODOS os serviços e pastas do framework?')){go.disabled=false;return;}
- document.getElementById('cfg').classList.add('hide');document.getElementById('pick').classList.add('hide');
- document.getElementById('run').classList.remove('hide');
+ document.getElementById('pick').classList.add('hide');document.getElementById('run').classList.remove('hide');
+ document.getElementById('rhead').textContent=MODO=='instalar'?'Instalando…':'Removendo…';
  fetch('/start?key='+KEY,{method:'POST',headers:{'Content-Type':'application/json'},
    body:JSON.stringify({modo:MODO,componentes:sel(),token:(document.getElementById('tok')||{}).value||'',
      repo:(document.getElementById('repo')||{}).value||'',provedor:(document.getElementById('prov')||{}).value||'VPS',
@@ -705,10 +709,10 @@ function start(){var go=document.getElementById('go');go.disabled=true;
    if(d.tipo=='passo'){var el=document.getElementById('st-'+d.id);if(el){el.className='st '+(d.status=='ok'?'ok':d.status=='rodando'?'run':d.status=='erro'?'erro':'');
      el.querySelector('.ic').className='ic ti '+(d.status=='ok'?'ti-circle-check':d.status=='rodando'?'ti-loader-2':d.status=='erro'?'ti-alert-circle':'ti-circle');}}
    if(d.pct!=null){document.getElementById('bar').style.width=d.pct+'%';document.getElementById('pct').textContent=d.pct+'%';}
-   if(d.tipo=='log'){var L=document.getElementById('log');L.textContent+=d.msg+'\n';L.scrollTop=L.scrollHeight;document.getElementById('sl').textContent=d.msg.slice(0,58);}
+   if(d.tipo=='log'){var L=document.getElementById('log');L.textContent+=d.msg+'\n';L.scrollTop=L.scrollHeight;document.getElementById('sl').textContent=d.msg.slice(0,54);}
    if(d.tipo=='fim'){es.close();var go=document.getElementById('go');go.disabled=false;
      if(d.fase=='ok'){var dom=(document.getElementById('dom')||{}).value||'';var url=dom?('https://'+dom+'/admin/'):('http://'+IP+'/admin/');
-       document.getElementById('sl').textContent='Concluído — ambiente no ar';
+       document.getElementById('sl').textContent='Concluído — ambiente no ar';document.getElementById('rhead').textContent='Instalação concluída ✓';
        go.textContent='Entrar no painel →';go.className='go done';go.onclick=function(){window.open(url,'_blank');};}
      else{go.textContent='Erro — ver log';go.className='go uni';}}
  };}
