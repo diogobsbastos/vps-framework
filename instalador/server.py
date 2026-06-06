@@ -25,6 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 PORTA = 9000
+EH_PC = (os.name == "nt")  # instalador no PC (Windows): modo ponte-SSH, nao inspeciona local
 ALVO_USER = os.environ.get("VPS_USER", "ubuntu")
 HOME = f"/home/{ALVO_USER}"
 REPO = os.environ.get("VPS_REPO", "https://github.com/diogobsbastos/vps-escola-parque-admin.git")
@@ -121,7 +122,7 @@ def _detectar_ip_pub():
     except Exception:
         return "SEU-IP"
 IP_PUB = _detectar_ip_pub()
-VERSAO = "v0.13.0"
+VERSAO = "v0.13.7"
 try:
     import datetime as _dt
     try:
@@ -590,7 +591,7 @@ MAPA_PASSO = {
 # DESINSTALADOR (VM volta limpa)
 # ============================================================
 SERVICOS_DEL = ["vpsadmin", "vpsmcp", "llmgateway", "vpswebhook", "postgrest",
-                "ntfy", "evolution", "vpssentinela.timer", "vpsautodeploy.timer",
+                "backendcentral", "ntfy", "evolution", "vpssentinela.timer", "vpsautodeploy.timer",
                 "vpsbackup.timer", "vpsmetricas.timer"]
 
 
@@ -599,7 +600,8 @@ def d_servicos():
         sh(f"systemctl disable --now {s} 2>/dev/null || true")
     sh("rm -f /etc/systemd/system/vps*.service /etc/systemd/system/vps*.timer "
        "/etc/systemd/system/llmgateway.service /etc/systemd/system/ntfy.service "
-       "/etc/systemd/system/evolution.service /etc/systemd/system/postgrest.service")
+       "/etc/systemd/system/evolution.service /etc/systemd/system/postgrest.service "
+       "/etc/systemd/system/backendcentral.service")
     sh("systemctl daemon-reload")
 
 
@@ -622,11 +624,37 @@ def d_arquivos():
     sh(como_user(f"rm -f {HOME}/.github_token {HOME}/.git-credentials 2>/dev/null; git config --global --unset credential.helper 2>/dev/null || true"))
 
 
+def d_purge():
+    """Limpeza profunda: remove tambem PostgreSQL (e TODOS os bancos), Nginx, Node,
+    PostgREST, ntfy e Ollama + repos. Deixa a VM virgem."""
+    # PostgREST / ntfy / Ollama (binarios + servico + dados)
+    sh("systemctl disable --now ollama 2>/dev/null || true")
+    sh("rm -f /etc/systemd/system/ollama.service /etc/systemd/system/multi-user.target.wants/ollama.service")
+    sh("rm -f /usr/local/bin/postgrest /usr/local/bin/ntfy /usr/local/bin/ollama")
+    sh("rm -rf /usr/share/ollama /root/.ollama /etc/ntfy /var/cache/ntfy 2>/dev/null || true")
+    # PostgreSQL (purga pacote + dados + repo)
+    sh("systemctl disable --now postgresql 2>/dev/null || true")
+    sh("export DEBIAN_FRONTEND=noninteractive; apt-get purge -y 'postgresql*' 2>/dev/null || true")
+    sh("rm -rf /var/lib/postgresql /etc/postgresql /etc/postgresql-common 2>/dev/null || true")
+    sh("rm -f /etc/apt/sources.list.d/pgdg.list 2>/dev/null || true")
+    # Nginx
+    sh("systemctl disable --now nginx 2>/dev/null || true")
+    sh("export DEBIAN_FRONTEND=noninteractive; apt-get purge -y 'nginx*' 2>/dev/null || true")
+    sh("rm -rf /etc/nginx 2>/dev/null || true")
+    # Node.js (nodesource, instalado pra Evolution)
+    sh("export DEBIAN_FRONTEND=noninteractive; apt-get purge -y nodejs 2>/dev/null || true")
+    sh("rm -f /etc/apt/sources.list.d/nodesource.list 2>/dev/null || true")
+    sh("export DEBIAN_FRONTEND=noninteractive; apt-get autoremove -y 2>/dev/null || true")
+    sh("systemctl daemon-reload 2>/dev/null || true")
+    emit({"tipo": "log", "msg": "Limpeza profunda concluida — a VM deve estar virgem."})
+
+
 PASSOS_DESINSTALAR = [
     ("d_servicos", "Parar e remover serviços", "ti-player-stop", d_servicos),
     ("d_nginx",    "Remover rotas do Nginx",   "ti-world-off", d_nginx),
     ("d_banco",    "Remover banco evolution",  "ti-database-off", d_banco),
     ("d_arquivos", "Apagar pastas e binários", "ti-trash", d_arquivos),
+    ("d_purge",    "Limpeza profunda (Postgres/Nginx/Node/Ollama)", "ti-eraser", d_purge),
 ]
 
 
@@ -726,13 +754,34 @@ def ssh_desconectar():
 
 
 def _framework_instalado() -> bool:
-    """True se há QUALQUER coisa do framework instalada no alvo (local ou SSH)."""
+    """True se há QUALQUER vestígio do framework no alvo (exclui nginx/postgres, que são base).
+    Checa todos os marcadores em UMA chamada."""
     marcos = [
         "/usr/local/bin/vps_provision",
-        "/etc/systemd/system/vpsadmin.service",
         f"{_home()}/vps-admin",
+        "/etc/systemd/system/vpsadmin.service",
+        "/etc/systemd/system/vpsmcp.service",
+        "/etc/systemd/system/llmgateway.service",
+        "/etc/systemd/system/vpswebhook.service",
+        "/etc/systemd/system/postgrest.service",
+        "/etc/systemd/system/ntfy.service",
+        "/etc/systemd/system/evolution.service",
+        "/etc/systemd/system/backendcentral.service",
+        "/etc/systemd/system/vpssentinela.timer",
     ]
-    return any(_existe(m) for m in marcos)
+    script = 'for f in %s; do [ -e "$f" ] && { echo 1; exit 0; }; done; echo 0' % " ".join("'%s'" % m for m in marcos)
+    _rc, out = _exec(script)
+    return out.strip().endswith("1")
+
+
+def _algo_pra_remover() -> bool:
+    """True se ha QUALQUER coisa pra remover: framework OU pacotes-base (nginx/postgres/node/etc.)."""
+    if _framework_instalado():
+        return True
+    rc, _o = _exec("command -v nginx >/dev/null 2>&1 || command -v psql >/dev/null 2>&1 || "
+                   "command -v postgrest >/dev/null 2>&1 || command -v ollama >/dev/null 2>&1 || "
+                   "command -v node >/dev/null 2>&1")
+    return rc == 0
 
 
 INSPECT_ITENS = [
@@ -765,40 +814,61 @@ def _status_unidade(tipo: str, alvo: str) -> str:
 
 
 def inspecionar() -> dict:
-    """Raio-X do alvo: local (este servidor) ou remoto (SSH conectado)."""
+    """Raio-X do alvo num UNICO comando SSH (rapido: ~1 round-trip em vez de ~30)."""
     remoto = bool(SSH.get("client"))
+    if not remoto and EH_PC:
+        import socket as _sk
+        return {"pc": True, "host": _sk.gethostname()}
+    home = _home()
+    linhas = [
+        'stu(){ u="$1"; case "$u" in *.*) ;; *) u="$u.service";; esac; '
+        'systemctl cat "$u" >/dev/null 2>&1 || { echo ausente; return; }; '
+        '[ "$(systemctl is-active "$u" 2>/dev/null)" = active ] && echo ativo || echo inativo; }',
+        'stf(){ [ -e "$1" ] && echo ativo || echo ausente; }',
+        "printf 'HOST='; hostname 2>/dev/null",
+        "printf 'ARCH='; uname -m 2>/dev/null",
+        "printf 'OS='; lsb_release -ds 2>/dev/null",
+        "printf 'PY='; python3 --version 2>&1",
+        "printf 'DISCO='; df -h / 2>/dev/null | tail -1 | awk '{print $3\" de \"$2\" (\"$5\" usado)\"}'",
+        "printf 'CFG='; cat %s/.vps_config.json 2>/dev/null | tr -d '\\n'; echo" % home,
+    ]
+    for idx, (lb, ic, tp, al) in enumerate(INSPECT_ITENS):
+        fn = "stf" if tp == "file" else "stu"
+        linhas.append("printf 'S%d='; %s '%s'" % (idx, fn, al))
+    _rc, out = _exec("\n".join(linhas))
+    info, st, cfgraw = {}, {}, ""
+    for ln in (out or "").splitlines():
+        if "=" not in ln:
+            continue
+        k, v = ln.split("=", 1)
+        if k == "CFG":
+            cfgraw = v.strip()
+        elif k[:1] == "S" and k[1:].isdigit():
+            st[int(k[1:])] = v.strip()
+        else:
+            info[k] = v.strip()
+    itens = [{"label": lb, "icon": ic, "status": st.get(i, "ausente")}
+             for i, (lb, ic, tp, al) in enumerate(INSPECT_ITENS)]
+    ativos = sum(1 for it in itens if it["status"] == "ativo")
     cfg = {}
-    rc, raw = _exec(f"cat '{_home()}/.vps_config.json' 2>/dev/null")
-    if rc == 0 and raw.strip():
+    if cfgraw.strip():
         try:
-            cfg = json.loads(raw)
+            cfg = json.loads(cfgraw)
         except Exception:
             cfg = {}
-
-    def _o(c):
-        return _exec(c)[1].strip()
-
-    itens = [{"label": lb, "icon": ic, "status": _status_unidade(tp, al)}
-             for (lb, ic, tp, al) in INSPECT_ITENS]
-    ativos = sum(1 for i in itens if i["status"] == "ativo")
-    if remoto:
-        host = _o("hostname") or SSH.get("host", "")
-        ip = SSH.get("host", "")
-    else:
-        import socket
-        host = socket.gethostname()
-        ip = IP_PUB
+    host = info.get("HOST") or (SSH.get("host", "") if remoto else "")
+    ip = SSH.get("host", "") if remoto else IP_PUB
     return {
         "remoto": remoto,
-        "instalado": _framework_instalado(),
+        "instalado": _algo_pra_remover(),
         "host": host,
         "ip": ip,
         "provedor": (cfg.get("provedor") or cfg.get("provider") or "").strip(),
         "dominio": (cfg.get("dominio") or "").strip(),
-        "arch": _o("uname -m") or "?",
-        "os": (_o("lsb_release -ds 2>/dev/null")).strip('"'),
-        "python": _o("python3 --version"),
-        "disco": _o("df -h / | tail -1 | awk '{print $3\" de \"$2\" (\"$5\" usado)\"}'"),
+        "arch": info.get("ARCH") or "?",
+        "os": info.get("OS", "").strip('"'),
+        "python": info.get("PY", ""),
+        "disco": info.get("DISCO", ""),
         "ativos": ativos,
         "total": len(itens),
         "itens": itens,
@@ -872,7 +942,12 @@ def instalar_remoto(selec, modo, cfg=None):
     try:
         # 1) SFTP: subir o pacote (instalador/override/locks/default_src)
         emit({"tipo": "log", "msg": f"### Enviando framework p/ {user}@{host} (SFTP)..."})
-        _exec(f"rm -rf {base_remoto}")
+        # prepara a pasta base com sudo: apaga residuo de outro dono, recria e da posse ao usuario SSH
+        _rc, _o = _exec(f"sudo rm -rf {base_remoto} && sudo mkdir -p {base_remoto} && sudo chown {user}:{user} {base_remoto}")
+        if _rc != 0:
+            emit({"tipo": "log", "msg": f"Nao consegui preparar {base_remoto} no alvo (sudo): {(_o or '').strip()[:200]}"})
+            emit({"tipo": "fim", "fase": "erro"})
+            return
         sftp = cli.open_sftp()
         try:
             for sub in ("instalador", "override", "locks", "default_src"):
@@ -963,7 +1038,7 @@ def orquestrar(selec: list, modo: str, cfg: dict = None):
         CONFIG["origem"] = cfg.get("origem", "local")
         CONFIG["arquivo_b64"] = cfg.get("arquivo_b64", "")
         CONFIG["arquivo_nome"] = cfg.get("arquivo_nome", "")
-    if modo == "desinstalar" and not _framework_instalado():
+    if modo == "desinstalar" and not _algo_pra_remover():
         with LOCK:
             ESTADO["fase"] = "ok"; ESTADO["passos"] = []; ESTADO["pct"] = 100
         emit({"tipo": "log", "msg": "Nada instalado — a VM já estava limpa. Nada a remover. ✓"})
@@ -1028,17 +1103,45 @@ STATUS_COMP = {
 }
 
 
+def _status_lote(pairs):
+    """Status de varias unidades/arquivos em UMA chamada SSH. pairs=[(tipo,alvo),...] -> [status,...]."""
+    if not pairs:
+        return []
+    linhas = [
+        'stu(){ u="$1"; case "$u" in *.*) ;; *) u="$u.service";; esac; '
+        'systemctl cat "$u" >/dev/null 2>&1 || { echo ausente; return; }; '
+        '[ "$(systemctl is-active "$u" 2>/dev/null)" = active ] && echo ativo || echo inativo; }',
+        'stf(){ [ -e "$1" ] && echo ativo || echo ausente; }',
+    ]
+    for idx, (tp, al) in enumerate(pairs):
+        fn = "stf" if tp == "file" else "stu"
+        linhas.append("printf 'S%d='; %s '%s'" % (idx, fn, al))
+    _rc, out = _exec("\n".join(linhas))
+    st = {}
+    for ln in (out or "").splitlines():
+        if ln[:1] == "S" and "=" in ln:
+            k, v = ln.split("=", 1)
+            if k[1:].isdigit():
+                st[int(k[1:])] = v.strip()
+    return [st.get(i, "ausente") for i in range(len(pairs))]
+
+
 def checkboxes_html():
     out = []
+    # status de TODOS os componentes em UMA chamada (rapido). No PC sem SSH, pula.
+    comp_status = {}
+    if SSH.get("client") or not EH_PC:
+        chaves = [(cid, STATUS_COMP[cid]) for (cid, _l, _i, _ob) in COMPONENTES if cid in STATUS_COMP]
+        res = _status_lote([par for (_c, par) in chaves])
+        comp_status = {chaves[i][0]: res[i] for i in range(len(chaves))}
     for cid, label, icon, obrig in COMPONENTES:
-        st = None
-        if cid in STATUS_COMP:
-            tp, al = STATUS_COMP[cid]
-            st = _status_unidade(tp, al)
+        st = comp_status.get(cid)
         tag = " <span class='req'>obrigatório</span>" if obrig else ""
         badge = ""
-        if st == "ativo":           # ja instalado e rodando -> nao remarca, mas pode reparar
+        inst = ""
+        if st == "ativo":           # ja instalado e rodando -> desmarcado, mas pode reparar
             mark, dis = "", ""
+            inst = "data-inst='1'"
             badge = "<span class='cb cb-ok'>✓ instalado</span>"
         elif st == "inativo":       # instalado mas parado -> marca pra reparar
             mark, dis = "checked", ("disabled" if obrig else "")
@@ -1048,8 +1151,9 @@ def checkboxes_html():
             dis = "disabled" if obrig else ""
             if st == "ausente":
                 badge = "<span class='cb cb-new'>instalar</span>"
+        cls = "cmp inst" if inst else "cmp"
         out.append(
-            f"<label class='cmp'><input type='checkbox' value='{cid}' {mark} {dis}>"
+            f"<label class='{cls}'><input type='checkbox' value='{cid}' {mark} {dis} {inst}>"
             f"<i class='ti {icon}'></i><span>{label}{tag}</span>{badge}</label>")
     return "\n".join(out)
 
@@ -1107,7 +1211,9 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .cb{font-size:10px;padding:2px 9px;border-radius:99px;font-weight:600;letter-spacing:.3px;white-space:nowrap;flex:none}
 .cb-ok{background:rgba(43,189,158,.13);color:#3ad6b0;border:1px solid rgba(43,189,158,.33)}
 .cb-warn{background:rgba(239,107,107,.12);color:#ff9b9b;border:1px solid rgba(239,107,107,.4)}
-.cb-new{background:rgba(127,184,172,.10);color:#9fd4c8;border:1px solid rgba(127,184,172,.28)}
+.cb-new{background:rgba(224,176,87,.14);color:#e8c074;border:1px solid rgba(224,176,87,.45)}
+.cmp.inst{opacity:.55}
+.cmp.inst:hover{opacity:.85}
 .steps{display:flex;flex-direction:column;gap:4px;margin-bottom:10px;flex:none;max-height:42%;overflow-y:auto}
 .st{display:flex;align-items:center;gap:9px;font-size:12.5px;color:#8fb0a8;padding:5px 7px;border-radius:7px}
 .st.run{color:#eafff9;background:rgba(43,189,158,.10)}.st.ok{color:#dfeae6}.st span{flex:1;min-width:0}.st .ic{font-size:14px;flex:none}
@@ -1232,7 +1338,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
     <div class=rbody>
       <div id=servidor class=srvcard><div class=srvload>🔍 Lendo o servidor…</div></div>
       <div id=pick>__CHECKBOXES__</div>
-      <div id=uni class=hide><div style="border:1px solid rgba(224,107,107,.4);background:rgba(224,107,107,.08);border-radius:10px;padding:14px 16px;font-size:13px;color:#f3c0c0;line-height:1.7"><b style="color:#ff9b9b"><i class="ti ti-alert-triangle"></i> Isto remove TODO o framework desta VM</b><br>Para e apaga: painel, PostgreSQL, PostgREST, MCP, Gateway, Webhook, Sentinela, ntfy, Evolution, Backend Central, provisionador, rotas Nginx e o banco <code>evolution</code>.<br><span style="color:#9fb0a8">A VM volta <b>limpa, do zero</b>. O código no GitHub e teus backups <b>não</b> são tocados.</span></div></div>
+      <div id=uni class=hide><div style="border:1px solid rgba(224,107,107,.4);background:rgba(224,107,107,.08);border-radius:10px;padding:14px 16px;font-size:13px;color:#f3c0c0;line-height:1.7"><b style="color:#ff9b9b"><i class="ti ti-alert-triangle"></i> Isto remove o framework desta VM</b><br>Para e apaga TUDO que o framework instalou: serviços, provisionador, rotas Nginx, o banco <code>evolution</code> — e também <b>PostgreSQL (com TODOS os bancos), Nginx, Node e Ollama</b>.<br><span style="color:#9fb0a8"><b>A VM volta virgem.</b> O código no GitHub e teus backups <b>não</b> são tocados.</span></div></div>
       <div id=run class=hide><div class=steps id=steps></div><div class=log id=log></div></div>
     </div>
   </div>
@@ -1246,7 +1352,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
   <div class=modalcard>
     <div class=modalicon><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#ef6b6b" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 4 1.9 18.4a2 2 0 0 0 1.7 3h16.8a2 2 0 0 0 1.7-3L13.7 4a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9.5" x2="12" y2="13.5"/><circle cx="12" cy="17.2" r="0.7" fill="#ef6b6b" stroke="none"/></svg></div>
     <h3>Remover tudo desta VM?</h3>
-    <p>Isto <b>para e apaga TODOS</b> os serviços (Postgres, painel, MCP, Gateway, Webhook, Sentinela, ntfy, Evolution, Backend Central), as rotas Nginx e o banco <code>evolution</code>. A VM volta <b>limpa, do zero</b>.</p>
+    <p>Isto <b>para e apaga TUDO</b> que o framework instalou — serviços, provisionador, rotas Nginx, o banco <code>evolution</code> e também <b>PostgreSQL (com TODOS os bancos), Nginx, Node e Ollama</b>. A VM volta <b>virgem</b>.</p>
     <p class=modalsafe>✔ O código no GitHub e seus backups NÃO são tocados.</p>
     <div class=modalbtns>
       <button class=mbcancel onclick="fecharModal()">Cancelar</button>
@@ -1269,6 +1375,10 @@ function renderSSH(d){CONECTADO=!!(d&&d.conectado);var box=document.getElementBy
  if(CONECTADO){window.SSHWHO=d.user+"@"+d.host;box.innerHTML="<div class=sshrow><span class='sshdot on'></span> Conectado via SSH</div>"+
    "<div class=sshwho>"+d.user+"@"+d.host+"</div>"+
    "<div class=sshbtns><button type=button onclick=abrirConn()>Trocar servidor</button><button type=button class=ghost onclick=desconectar()>✕ Desconectar</button></div>";}
+ else if(d&&d.pc){box.innerHTML="<div class=sshrow><span class='sshdot off'></span> Instalador no seu PC</div>"+
+   "<div class=sshwho>"+(d.host||"")+"</div>"+
+   "<div class=sshmuted>Pronto pra instalar num servidor. Código padrão já embarcado ✓.</div>"+
+   "<button type=button class=gconn onclick=abrirConn() style='margin-top:9px'>🔌 Conectar a um servidor (SSH)</button>";}
  else{box.innerHTML="<div class=sshrow><span class='sshdot on'></span> Operando neste servidor</div>"+
    "<div class=sshwho>"+(d.host||"")+(d.ip?(" · "+d.ip):"")+"</div>"+
    "<div class=sshmuted>O instalador está rodando dentro dele (sem SSH).</div>"+
@@ -1296,7 +1406,7 @@ function conectar(){var btn=document.getElementById('btnconn');btn.disabled=true
  ['dragleave','drop'].forEach(function(ev){z.addEventListener(ev,function(e){e.preventDefault();z.classList.remove('over');});});
  z.addEventListener('drop',function(e){if(e.dataTransfer&&e.dataTransfer.files.length){setk(e.dataTransfer.files[0]);}});}})();
 estadoSSH();
-function marcarTodos(v){[].slice.call(document.querySelectorAll('#pick input:not([disabled])')).forEach(function(x){x.checked=!!v;});}
+function marcarTodos(v){[].slice.call(document.querySelectorAll('#pick input:not([disabled])')).forEach(function(x){if(v&&x.getAttribute('data-inst'))return;x.checked=!!v;});}
 function sel(){return [].slice.call(document.querySelectorAll('#pick input:checked')).map(function(x){return x.value;});}
 function removerTudo(){document.getElementById('modal').classList.add('show');}
 function fecharModal(){document.getElementById('modal').classList.remove('show');}
@@ -1345,6 +1455,10 @@ function corStatus(st){return st=="ativo"?"#2bbd9e":st=="inativo"?"#ef6b6b":"#52
 function toggleSrv(){var d=document.getElementById("srvdet"),t=document.getElementById("srvtog");if(!d)return;var h=d.classList.toggle("hide");if(t)t.textContent=h?"ver tudo ▾":"ocultar ▴";}
 function carregarServidor(){fetch("/inspecionar?key="+KEY).then(function(r){return r.json();}).then(function(d){
  var box=document.getElementById("servidor");if(!box)return;if(d.erro){box.innerHTML="";return;}
+ if(d.pc){box.innerHTML="<div class=srvtop><span class=srvttl>SEU PC</span></div>"+
+   "<div class=srvid>🖥 "+(d.host||"este computador")+"</div>"+
+   "<div class=srvsum>Este é o instalador rodando no seu PC. Conecte a um servidor por <b style='color:#3ad6b0'>SSH</b> pra instalar. <span style='color:#7fb8ac'>Código padrão já embarcado ✓</span></div>";
+   var _g=document.getElementById('go');if(_g)_g.disabled=true;var _sl=document.getElementById('sl');if(_sl)_sl.textContent='Conecte a um servidor (SSH) para instalar';return;}
  var dots=d.itens.map(function(i){var c=corStatus(i.status);return "<span class=srvitem><span class=srvdot style='color:"+c+";background:"+c+"'></span>"+i.label+"</span>";}).join("");
  var idln="🖥 "+d.host+(d.provedor?" · "+d.provedor:"")+" · "+d.arch+(d.os?" · "+d.os:"");
  var resumo=d.instalado?("<b style='color:#2bbd9e'>"+d.ativos+"/"+d.total+"</b> serviços ativos"):("<b style='color:#e0b057'>VM limpa</b> — nada instalado ainda");
@@ -1357,7 +1471,7 @@ carregarServidor();
 _syncRemover();
 function render(passos){var c=document.getElementById('steps');if(c.dataset.done)return;c.dataset.done=1;
  c.innerHTML=passos.map(function(p){return '<div class="st" id="st-'+p.id+'"><i class="ti '+p.icon+'"></i><span>'+p.label+'</span><i class="ic ti ti-circle"></i></div>';}).join('');}
-</script></body></html>""".replace("__CHECKBOXES__", checkboxes_html()).replace("__IP__", IP_PUB).replace("__INSTALADO__", "true" if _framework_instalado() else "false").replace("__VERSAO__", VERSAO).replace("__BUILD__", _BUILD)
+</script></body></html>""".replace("__CHECKBOXES__", checkboxes_html()).replace("__IP__", IP_PUB).replace("__INSTALADO__", "true" if _algo_pra_remover() else "false").replace("__VERSAO__", VERSAO).replace("__BUILD__", _BUILD)
 
 
 # ============================================================
@@ -1404,6 +1518,7 @@ class H(BaseHTTPRequestHandler):
             _con = bool(SSH.get("client"))
             self.wfile.write(json.dumps({
                 "conectado": _con,
+                "pc": (EH_PC and not _con),
                 "host": SSH.get("host", "") if _con else _sk.gethostname(),
                 "user": SSH.get("user", "") if _con else "",
                 "ip": SSH.get("host", "") if _con else IP_PUB,

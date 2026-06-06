@@ -10,6 +10,8 @@ echo   INSTALADOR LOCAL (roda no SEU PC)
 echo   Conecta em qualquer servidor por SSH.
 echo ============================================
 echo.
+echo Encerrando instalador anterior na porta 9000 (se houver)...
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr :9000 ^| findstr LISTENING') do taskkill /F /PID %%a >nul 2>nul
 echo Instalando/atualizando dependencia SSH (paramiko)...
 %PY% -m pip install -U paramiko -q
 set VPS_KEY=local123
