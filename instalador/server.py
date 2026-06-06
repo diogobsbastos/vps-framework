@@ -61,6 +61,7 @@ COMPONENTES = [
     ("sentinela", "Sentinela + timers",              "ti-bell", False),
     ("ntfy",      "ntfy (push proprio)",             "ti-send", False),
     ("evolution", "Evolution API (WhatsApp)",        "ti-brand-whatsapp", False),
+    ("worker",    "Backend Central (worker)",        "ti-engine", False),
     ("libs",      "Biblioteca completa (IA/Visão/Mídia)", "ti-books", False),
     ("https",     "HTTPS + domínio (cadeado + rota MCP)",  "ti-lock", False),
     ("ollama",    "Ollama (LLM local) — pesado",     "ti-cpu", False),
@@ -105,6 +106,15 @@ def como_user(cmd: str) -> str:
     safe = cmd.replace("'", "'\\''")
     return f"sudo -u {ALVO_USER} bash -lc '{safe}'"
 
+
+def _detectar_ip_pub():
+    try:
+        r = subprocess.run("curl -fsSL --max-time 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}'",
+                           shell=True, capture_output=True, text=True).stdout.strip()
+        return r or "SEU-IP"
+    except Exception:
+        return "SEU-IP"
+IP_PUB = _detectar_ip_pub()
 
 print(f"[instalador] token={TOKEN}  porta={PORTA}  dry={DRY}", flush=True)
 
@@ -186,7 +196,7 @@ def p_postgres():
 
 
 def p_postgrest():
-    arch_kw = "x64|amd64" if DET.get("arch") in ("x86_64", "amd64") else "aarch64|arm64"
+    arch_kw = "x86-64|x86_64|amd64|x64" if DET.get("arch") in ("x86_64", "amd64") else "aarch64|arm64"
     sh('set -e; URL=$(curl -fsSL https://api.github.com/repos/PostgREST/postgrest/releases/latest '
        '| grep -o \'"browser_download_url": *"[^"]*"\' | sed -E \'s/.*"(http[^"]+)"/\\1/\' '
        f'| grep -iE "linux|ubuntu" | grep -iE "{arch_kw}" | grep -iE "tar" | head -1); '
@@ -392,6 +402,45 @@ def p_evolution():
     emit({"tipo": "log", "msg": "Evolution instalada — configure .env e DATABASE pelo painel depois."})
 
 
+def p_worker():
+    d = f"{HOME}/backend-central"
+    sh(como_user(f"mkdir -p {d} && python3 -m venv {d}/.venv && {d}/.venv/bin/pip -q install psycopg2-binary"))
+    worker = (
+        "#!/usr/bin/env python3\n"
+        "# Backend Central (worker) — slot generico do framework.\n"
+        "# Roda em loop; coloque aqui a logica de sync/integracao\n"
+        "# (ex.: Supabase local <-> outro sistema, filas, ETL).\n"
+        "import time\n"
+        "# import psycopg2  # banco local: postgres://authenticator@localhost:5432/postgres\n"
+        "def ciclo():\n"
+        "    # >>> SUA LOGICA DE SYNC/INTEGRACAO AQUI <<<\n"
+        "    pass\n"
+        "if __name__ == '__main__':\n"
+        "    print('Backend Central worker iniciado', flush=True)\n"
+        "    while True:\n"
+        "        try:\n"
+        "            ciclo()\n"
+        "        except Exception as e:\n"
+        "            print('erro no ciclo:', e, flush=True)\n"
+        "        time.sleep(30)\n"
+    )
+    sh(como_user(f"cat > {d}/worker.py <<'WK'\n{worker}WK"))
+    unit = f"""[Unit]
+Description=Backend Central (worker do framework)
+After=network.target postgresql.service
+[Service]
+User={ALVO_USER}
+WorkingDirectory={d}
+ExecStart={d}/.venv/bin/python worker.py
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=multi-user.target
+"""
+    sh(f"cat > /etc/systemd/system/backendcentral.service <<'U'\n{unit}U")
+    sh("systemctl daemon-reload && systemctl enable --now backendcentral")
+
+
 def p_libs():
     d = f"{HOME}/libs-base"
     sh(como_user(f"mkdir -p {d} && python3 -m venv {d}/.venv"))
@@ -450,7 +499,7 @@ MAPA_PASSO = {
     "painel": p_painel, "provisionador": p_provisionador, "webhook": p_webhook,
     "mcp": p_mcp, "gateway": p_gateway, "sentinela": p_sentinela,
     "ntfy": p_ntfy, "evolution": p_evolution,
-    "libs": p_libs, "https": p_https, "ollama": p_ollama,
+    "worker": p_worker, "libs": p_libs, "https": p_https, "ollama": p_ollama,
 }
 
 
@@ -539,7 +588,7 @@ def orquestrar(selec: list, modo: str, cfg: dict = None):
             pw = open(f"{HOME}/.vps_admin_pass").read().strip()
         except Exception:
             pw = "(ver ~/.vps_admin_pass)"
-        emit({"tipo": "log", "msg": f"PAINEL: http://SEU-IP/admin/  ·  senha: {pw}"})
+        emit({"tipo": "log", "msg": f"PAINEL: http://{IP_PUB}/admin/  ·  senha: {pw}"})
     emit({"tipo": "fim", "fase": "ok"})
 
 
@@ -561,98 +610,111 @@ def checkboxes_html():
 def pagina():
     return """<!DOCTYPE html><html lang=pt-br><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<title>Instalador · VPS Framework</title>
+<title>VPS Admin · Instalador</title>
 <link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/3.34.0/iconfont/tabler-icons.min.css">
 <style>
-:root{--bg:#0f1115;--card:#171a21;--bd:#262b36;--tx:#e6e8ec;--mut:#9aa3b2;--ac:#3b82f6;--ok:#22c55e;--er:#ef4444}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font-family:system-ui,Segoe UI,sans-serif;line-height:1.5}
-.wrap{max-width:680px;margin:32px auto;padding:0 16px}
-.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;overflow:hidden}
-.hd{display:flex;align-items:center;gap:12px;padding:18px 22px;border-bottom:1px solid var(--bd)}
-.hd i{font-size:26px;color:var(--ac)}.hd b{font-size:17px;font-weight:600}.hd small{color:var(--mut);display:block;font-size:12px}
-.bd{padding:20px 22px}
-.cmp{display:flex;align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--bd);border-radius:9px;margin-bottom:7px;cursor:pointer;font-size:14px}
-.cmp:hover{border-color:#384152}.cmp input{width:17px;height:17px;accent-color:var(--ac)}
-.cmp i{font-size:19px;color:var(--mut)}.cmp .req{color:var(--mut);font-size:11px;margin-left:4px}
-.steps{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
-.st{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--mut)}
-.st.run{color:var(--tx)}.st.ok{color:var(--tx)}.st .ic{font-size:16px;margin-left:auto}
-.st.ok .ic{color:var(--ok)}.st.run .ic{color:var(--ac)}.st.erro .ic{color:var(--er)}
-.barwrap{height:11px;background:#0b0d11;border-radius:99px;overflow:hidden;margin:4px 0 6px}
-.bar{height:100%;width:0;background:var(--ac);border-radius:99px;transition:width .4s}
-.row{display:flex;justify-content:space-between;font-size:12px;color:var(--mut)}
-.btn{margin-top:18px;width:100%;border:none;border-radius:10px;padding:12px;font-size:15px;font-weight:600;cursor:pointer;background:var(--ac);color:#fff}
-.btn.gho{background:transparent;border:1px solid var(--bd);color:var(--tx)}
-.btn:disabled{opacity:.5;cursor:default}
-.log{margin-top:14px;background:#0b0d11;border:1px solid var(--bd);border-radius:9px;padding:10px;height:170px;overflow:auto;font-family:ui-monospace,monospace;font-size:11.5px;color:#aeb6c2;white-space:pre-wrap}
-.tabs{display:flex;gap:6px;margin-bottom:14px}
-.tab{flex:1;text-align:center;padding:8px;border:1px solid var(--bd);border-radius:8px;cursor:pointer;font-size:13px;color:var(--mut)}
-.tab.on{border-color:var(--ac);color:var(--tx)}
-.fld{display:block;margin-bottom:10px;font-size:13px;color:var(--mut)}
-.fld span{display:block;margin-bottom:4px}.fld small{color:#6b7280}
-.fld input{width:100%;padding:8px 10px;border:1px solid var(--bd);border-radius:8px;background:#0b0d11;color:var(--tx);font-size:13px}
+html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;font-family:system-ui,Segoe UI,sans-serif}
+.bg{position:fixed;inset:0;width:100%;height:100%;z-index:0}
+.shell{position:relative;z-index:2;height:100vh;display:flex;flex-direction:column;align-items:center}
+.brand{text-align:center;padding:24px 16px 6px}
+.emblem{width:58px;height:58px;margin:0 auto 9px;border-radius:16px;border:1px solid rgba(43,189,158,.45);background:rgba(43,189,158,.12);display:flex;align-items:center;justify-content:center}
+.emblem i{font-size:29px;color:#3ad6b0}
+.brand h1{margin:0;font-size:25px;font-weight:700;letter-spacing:3px;background:linear-gradient(180deg,#eafff9,#5f897e);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.brand p{margin:4px 0 0;font-size:11.5px;letter-spacing:2px;color:#7fb8ac;text-transform:uppercase}
+.panel{flex:1;width:100%;max-width:480px;overflow:auto;padding:12px 18px}
+.tabs{display:flex;gap:6px;margin-bottom:13px}
+.tab{flex:1;text-align:center;padding:9px;border:1px solid rgba(255,255,255,.12);border-radius:9px;cursor:pointer;font-size:13px;color:#8fb0a8}
+.tab.on{border-color:#2bbd9e;color:#eafff9;background:rgba(43,189,158,.08)}
+.fld{display:block;margin-bottom:9px;font-size:12.5px;color:#8fb0a8}
+.fld span{display:block;margin-bottom:4px}.fld small{color:#5f897e}
+.fld input{width:100%;padding:9px 11px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(5,12,10,.6);color:#dfeae6;font-size:13px}
+.cmp{display:flex;align-items:center;gap:10px;padding:8px 11px;border:1px solid rgba(255,255,255,.08);border-radius:9px;margin-bottom:6px;cursor:pointer;font-size:13.5px;background:rgba(8,18,16,.45)}
+.cmp:hover{border-color:rgba(43,189,158,.4)}.cmp input{width:16px;height:16px;accent-color:#2bbd9e}
+.cmp i{font-size:18px;color:#5f897e}.cmp .req{color:#5f897e;font-size:11px;margin-left:4px}
+.steps{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
+.st{display:flex;align-items:center;gap:9px;font-size:12.5px;color:#8fb0a8;padding:4px 6px;border-radius:7px}
+.st.run{color:#eafff9;background:rgba(43,189,158,.10)}.st.ok{color:#dfeae6}.st .ic{font-size:14px;margin-left:auto}
+.st.ok .ic{color:#3ad6b0}.st.run .ic{color:#2bbd9e}.st.erro .ic{color:#ef6b6b}
+.log{background:rgba(5,12,10,.7);border:1px solid rgba(255,255,255,.08);border-radius:9px;padding:9px;height:120px;overflow:auto;font-family:ui-monospace,monospace;font-size:11px;color:#9fb0a8;white-space:pre-wrap}
+.dock{width:100%;background:rgba(5,12,10,.85);backdrop-filter:blur(10px);border-top:1px solid rgba(43,189,158,.18);padding:13px 22px;display:flex;align-items:center;gap:18px}
+.go{background:linear-gradient(90deg,#2bbd9e,#16a085);color:#04130d;border:none;border-radius:10px;padding:11px 26px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:0 6px 18px rgba(43,189,158,.35)}
+.go:disabled{opacity:.5;cursor:default}.go.uni{background:linear-gradient(90deg,#e06b6b,#c0392b);color:#fff}
+.go.done{background:linear-gradient(90deg,#3ad6b0,#16a085)}
+.prog{flex:1}.prow{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:7px}
+.prow #sl{color:#bfe0d7}.prow #pct{color:#2bbd9e;font-weight:600;font-variant-numeric:tabular-nums}
+.track{height:8px;background:rgba(255,255,255,.08);border-radius:99px;overflow:hidden}
+.track #bar{height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,#2bbd9e,#3ad6b0);box-shadow:0 0 12px rgba(43,189,158,.5);transition:width .45s}
 .hide{display:none}
-</style></head><body><div class=wrap><div class=card>
-<div class=hd><i class="ti ti-server-cog"></i><div><b>Instalador · VPS Framework</b><small>Ubuntu · clone do servidor (menos Ollama)</small></div></div>
-<div class=bd>
-  <div class=tabs><div class="tab on" id=tab-inst onclick="modo('instalar')">Instalar</div><div class=tab id=tab-uni onclick="modo('desinstalar')">Remover tudo</div></div>
-  <div id=cfg>
-    <label class=fld><span>Repo do código (privado) — padrão já preenchido</span>
-      <input id=repo type=text value="https://github.com/diogobsbastos/vps-escola-parque-admin.git"></label>
-    <label class=fld><span>Token do GitHub <small>(p/ clonar o repo privado + ligar o deploy; fica só na VM)</small></span>
-      <input id=tok type=password placeholder="ghp_..."></label>
-    <label class=fld><span>Provedor <small>(só rótulo: aparece no painel)</small></span>
-      <input id=prov type=text value="GCP" placeholder="GCP / Oracle / Hetzner..."></label>
-    <label class=fld><span>Domínio <small>(opcional; vazio = acesso por IP em http)</small></span>
-      <input id=dom type=text placeholder="meuapp.duckdns.org"></label>
+</style></head><body>
+<svg class=bg viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid slice">
+ <defs>
+  <radialGradient id="glow" cx="40%" cy="35%" r="62%"><stop offset="0%" stop-color="#1d5f55" stop-opacity=".5"/><stop offset="100%" stop-color="#1d5f55" stop-opacity="0"/></radialGradient>
+  <linearGradient id="bgg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0a1614"/><stop offset="50%" stop-color="#0c1f1c"/><stop offset="100%" stop-color="#081310"/></linearGradient>
+  <linearGradient id="steel" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#2a3a37"/><stop offset="45%" stop-color="#15211f"/><stop offset="100%" stop-color="#0c1513"/></linearGradient>
+  <linearGradient id="teal" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#2bbd9e"/><stop offset="100%" stop-color="#0e6e5c"/></linearGradient>
+ </defs>
+ <rect width="1000" height="600" fill="url(#bgg)"/><rect width="1000" height="600" fill="url(#glow)"/>
+ <path d="M-50 130 C 250 50 430 250 730 130 S 1100 70 1080 280 L 1080 -40 L -50 -40 Z" fill="url(#steel)" opacity=".65"/>
+ <path d="M-50 510 C 220 600 470 400 700 510 S 1060 580 1080 460 L 1080 660 L -50 660 Z" fill="url(#steel)" opacity=".7"/>
+ <path d="M0 330 C 200 280 380 390 580 330" stroke="url(#teal)" stroke-width="2" fill="none" opacity=".45"/>
+ <path d="M640 270 h130 l26 26 v95" stroke="#1f8f78" stroke-width="1.5" fill="none" opacity=".55"/>
+ <path d="M60 470 C 92 418 154 418 180 386 C 174 450 122 492 60 470 Z" fill="url(#steel)" stroke="#2bbd9e" stroke-width="1" stroke-opacity=".5"/>
+ <path d="M950 120 C 918 172 856 172 830 204 C 836 140 888 98 950 120 Z" fill="url(#steel)" stroke="#2bbd9e" stroke-width="1" stroke-opacity=".5"/>
+</svg>
+<div class=shell>
+  <div class=brand>
+    <div class=emblem><i class="ti ti-server-bolt"></i></div>
+    <h1>VPS ADMIN</h1>
+    <p>Sua central de servidor · completa e pré-moldada</p>
   </div>
-  <div id=pick>__CHECKBOXES__</div>
-  <div id=run class=hide>
-    <div class=steps id=steps></div>
-    <div class=row><span id=sl>Pronto</span><span id=pct>0%</span></div>
-    <div class=barwrap><div class=bar id=bar></div></div>
-    <div class=log id=log></div>
+  <div class=panel>
+    <div class=tabs><div class="tab on" id=tab-inst onclick="modo('instalar')">Instalar</div><div class=tab id=tab-uni onclick="modo('desinstalar')">Remover tudo</div></div>
+    <div id=cfg>
+      <label class=fld><span>Repo do código (privado)</span><input id=repo type=text value="https://github.com/diogobsbastos/vps-escola-parque-admin.git"></label>
+      <label class=fld><span>Token do GitHub <small>(clona o repo privado + liga o deploy; fica só na VM)</small></span><input id=tok type=password placeholder="ghp_..."></label>
+      <label class=fld><span>Provedor <small>(rótulo no painel)</small></span><input id=prov type=text value="GCP" placeholder="GCP / Oracle / Hetzner..."></label>
+      <label class=fld><span>Domínio <small>(opcional; vazio = acesso por IP)</small></span><input id=dom type=text placeholder="meuapp.duckdns.org"></label>
+    </div>
+    <div id=pick>__CHECKBOXES__</div>
+    <div id=run class=hide><div class=steps id=steps></div><div class=log id=log></div></div>
   </div>
-  <button class=btn id=go onclick=start()>Instalar</button>
-</div></div></div>
+  <div class=dock>
+    <button class=go id=go onclick=start()>Instalar</button>
+    <div class=prog><div class=prow><span id=sl>Pronto para instalar</span><span id=pct>0%</span></div><div class=track><div id=bar></div></div></div>
+  </div>
+</div>
 <script>
-var KEY=new URLSearchParams(location.search).get("key")||"";
-var MODO="instalar";
+var KEY=new URLSearchParams(location.search).get("key")||"";var IP="__IP__";var MODO="instalar";
 function modo(m){MODO=m;document.getElementById('tab-inst').classList.toggle('on',m=='instalar');
  document.getElementById('tab-uni').classList.toggle('on',m=='desinstalar');
+ document.getElementById('cfg').classList.toggle('hide',m=='desinstalar');
  document.getElementById('pick').classList.toggle('hide',m=='desinstalar');
- document.getElementById('go').textContent=m=='instalar'?'Instalar':'Remover tudo';
- document.getElementById('go').style.background=m=='instalar'?'var(--ac)':'var(--er)';}
-function sel(){return [...document.querySelectorAll('#pick input:checked')].map(x=>x.value);}
-function start(){
- var go=document.getElementById('go');go.disabled=true;
+ var g=document.getElementById('go');g.textContent=m=='instalar'?'Instalar':'Remover tudo';g.className=m=='instalar'?'go':'go uni';}
+function sel(){return [].slice.call(document.querySelectorAll('#pick input:checked')).map(function(x){return x.value;});}
+function start(){var go=document.getElementById('go');go.disabled=true;
  if(MODO=='desinstalar'&&!confirm('Remover TODOS os serviços e pastas do framework?')){go.disabled=false;return;}
- document.getElementById('pick').classList.add('hide');
- var cf=document.getElementById('cfg');if(cf)cf.classList.add('hide');
+ document.getElementById('cfg').classList.add('hide');document.getElementById('pick').classList.add('hide');
  document.getElementById('run').classList.remove('hide');
  fetch('/start?key='+KEY,{method:'POST',headers:{'Content-Type':'application/json'},
-   body:JSON.stringify({modo:MODO,componentes:sel(),
-     token:(document.getElementById('tok')||{}).value||'',
-     repo:(document.getElementById('repo')||{}).value||'',
-     provedor:(document.getElementById('prov')||{}).value||'VPS',
+   body:JSON.stringify({modo:MODO,componentes:sel(),token:(document.getElementById('tok')||{}).value||'',
+     repo:(document.getElementById('repo')||{}).value||'',provedor:(document.getElementById('prov')||{}).value||'VPS',
      dominio:(document.getElementById('dom')||{}).value||''})});
  var es=new EventSource('/progress?key='+KEY);
  es.onmessage=function(e){var d=JSON.parse(e.data);
-   if(d.tipo=='reset'){render(d.passos);}
    if(d.passos){render(d.passos);}
    if(d.tipo=='passo'){var el=document.getElementById('st-'+d.id);if(el){el.className='st '+(d.status=='ok'?'ok':d.status=='rodando'?'run':d.status=='erro'?'erro':'');
      el.querySelector('.ic').className='ic ti '+(d.status=='ok'?'ti-circle-check':d.status=='rodando'?'ti-loader-2':d.status=='erro'?'ti-alert-circle':'ti-circle');}}
    if(d.pct!=null){document.getElementById('bar').style.width=d.pct+'%';document.getElementById('pct').textContent=d.pct+'%';}
-   if(d.tipo=='log'){var L=document.getElementById('log');L.textContent+=d.msg+'\\n';L.scrollTop=L.scrollHeight;
-     document.getElementById('sl').textContent=d.msg.slice(0,60);}
+   if(d.tipo=='log'){var L=document.getElementById('log');L.textContent+=d.msg+'\n';L.scrollTop=L.scrollHeight;document.getElementById('sl').textContent=d.msg.slice(0,58);}
    if(d.tipo=='fim'){es.close();var go=document.getElementById('go');go.disabled=false;
-     go.textContent=d.fase=='ok'?'✓ Concluído':'Erro — ver log';go.style.background=d.fase=='ok'?'var(--ok)':'var(--er)';}
- };
-}
-function render(passos){if(!passos)return;var c=document.getElementById('steps');if(c.dataset.done)return;c.dataset.done=1;
+     if(d.fase=='ok'){var dom=(document.getElementById('dom')||{}).value||'';var url=dom?('https://'+dom+'/admin/'):('http://'+IP+'/admin/');
+       document.getElementById('sl').textContent='Concluído — ambiente no ar';
+       go.textContent='Entrar no painel →';go.className='go done';go.onclick=function(){window.open(url,'_blank');};}
+     else{go.textContent='Erro — ver log';go.className='go uni';}}
+ };}
+function render(passos){var c=document.getElementById('steps');if(c.dataset.done)return;c.dataset.done=1;
  c.innerHTML=passos.map(function(p){return '<div class="st" id="st-'+p.id+'"><i class="ti '+p.icon+'"></i><span>'+p.label+'</span><i class="ic ti ti-circle"></i></div>';}).join('');}
-fetch('/estado?key='+KEY).then(r=>r.json()).then(d=>{}).catch(e=>{});
-</script></body></html>""".replace("__CHECKBOXES__", checkboxes_html())
+</script></body></html>""".replace("__CHECKBOXES__", checkboxes_html()).replace("__IP__", IP_PUB)
 
 
 # ============================================================

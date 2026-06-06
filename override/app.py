@@ -75,6 +75,7 @@ USUARIO_PADRAO = {"nome": "Diogo Brandão", "email": "diogobsbastos@gmail.com"}
 # Servicos do FRAMEWORK (iguais em qualquer instalacao). Apps do USUARIO vem do APPS_PATH (json).
 SERVICOS_BASE: dict[str, str] = {
     "vpsadmin":            "🛠️ VPS Admin (este painel)",
+    "backendcentral":      "🧠 Backend Central (worker)",
     "nginx":               "🚪 Nginx (porteiro/rotas)",
     "ollama":              "🦙 Ollama (LLM local)",
     "llmgateway":          "🔑 LLM Gateway (API com chave)",
@@ -1610,34 +1611,41 @@ if pagina == "📊 Dashboard":
 
     st.divider()
     st.subheader("📱 Apps")
+    st.markdown("<style>[class*='st-key-ativar_'] button{background:#fdecea !important;"
+                "color:#c0392b !important;border-color:#f1b0b7 !important;}</style>",
+                unsafe_allow_html=True)
     _svcs = todos_servicos()
-    _apps_web = [n for n in _svcs if url_acesso(n)]
+    _destaque = ["ntfy", "evolution"]   # sempre aparecem na aba Apps
+    _apps_web = [n for n in _svcs if url_acesso(n) or n in _destaque]
     cols_a = st.columns(min(4, max(1, len(_apps_web))))
     for i, nome in enumerate(_apps_web):
         stt = status_servico(nome)
         cor = {"active": "🟢", "inactive": "⚪", "failed": "🔴"}.get(stt, "🟡")
         _stk = (stack_node(STACK_SERVICO[nome])
                 if nome in STACK_SERVICO else "")
+        _url = url_acesso(nome)
         with cols_a[i % len(cols_a)]:
             with st.container(border=True):
                 st.markdown(
                     f"**{cor} {_svcs[nome]}**  \n"
                     f"<small>`{nome}` · {stt}"
-                    + (f"  \n{_stk}" if _stk else "") + "</small>"
-                    f"<div style='text-align:right;margin-top:6px'>"
-                    f"<a href='{url_acesso(nome)}' target='_blank' "
-                    f"style='text-decoration:none;background:#f9fafb;"
-                    f"border:1px solid #d1d5db;border-radius:8px;"
-                    f"padding:3px 12px;color:#111827'>↗</a></div>",
+                    + (f"  \n{_stk}" if _stk else "") + "</small>",
                     unsafe_allow_html=True,
                 )
+                if stt != "active":
+                    if st.button("▶ Ativar", key=f"ativar_{nome}", use_container_width=True):
+                        ok, msg = acao_servico(nome, "start")
+                        (st.success if ok else st.error)(msg[:300])
+                        time.sleep(1)
+                        st.rerun()
+                elif _url:
+                    st.link_button("↗ Acessar", _url, use_container_width=True)
+                else:
+                    st.caption("🟢 rodando")
 
     st.divider()
     st.subheader("🚦 Serviços")
     REGIOES = [
-        ("🏫 Escola Parque", ["escolaparque", "escolaparque-worker"]),
-        ("🚀 Frontend (Innova Exams)", ["innovafront"]),
-        ("🎸 Sertanejo", ["sertanejolab"]),
         ("🧰 Infra & IA", ["vpsadmin", "nginx", "ollama", "llmgateway",
                            "vpsmcp", "vpswebhook", "postgresql", "postgrest",
                            "ntfy", "evolution"]),
@@ -1700,6 +1708,13 @@ elif pagina == "🚀 Aplicativos":
             st.session_state["pagina"] = "➕ Novo App"
             st.rerun()
     st.markdown(ABAS_CSS, unsafe_allow_html=True)
+    st.markdown(  # Start (servico parado) com vermelho levinho — sinaliza "apagado, clique p/ ligar"
+        "<style>"
+        "[class*='st-key-i_'] button{background:#fdecea !important;color:#c0392b !important;"
+        "border-color:#f1b0b7 !important;}"
+        "[class*='st-key-i_'] button:hover{background:#fadbd8 !important;border-color:#e08c93 !important;}"
+        "</style>", unsafe_allow_html=True,
+    )
     tab_apps, tab_libs = st.tabs(["🚀 Apps & Serviços", "📚 Bibliotecas"])
 
     with tab_apps:
@@ -1881,40 +1896,44 @@ elif pagina == "🌐 Domínios & Rotas":
     if st.session_state.get("form_dom"):
         with st.container(border=True):
             st.markdown("**Apontar um domínio novo pra um app deste servidor** "
-                        "(ex.: frontend Next na porta 3000)")
+                        "— 1 clique: cria a rota Nginx + HTTPS (certbot).")
+            _ger_d = {}
+            try:
+                import subprocess as _spd, json as _jjd
+                _od = _spd.run(["sudo", "-n", "/usr/local/bin/vps_provision", "listar"],
+                               capture_output=True, text=True, timeout=15).stdout
+                _ger_d = {k: v.get("porta") for k, v in _jjd.loads(_od).items() if v.get("porta")}
+            except Exception:
+                _ger_d = {}
             with st.form("novo_dominio", border=False):
-                d1, d2, d3 = st.columns([2.2, 1.4, 1], vertical_alignment="bottom")
-                dom_novo = d1.text_input("Domínio completo",
-                                         placeholder="meuapp.duckdns.org")
-                porta_dom = d2.number_input("Porta interna do app", min_value=3000,
-                                            max_value=8999, value=3000)
-                ok_dom = d3.form_submit_button("Gerar kit 🔧", type="primary",
-                                               use_container_width=True)
+                dom_novo = st.text_input("Domínio completo (já apontado pro IP no seu DNS)",
+                                         placeholder="www.meusite.com.br")
+                _opts_d = ["(porta manual)"] + [f"{k} · porta {v}" for k, v in _ger_d.items()]
+                _sel_d = st.selectbox("App de destino", _opts_d)
+                if _sel_d == "(porta manual)":
+                    porta_dom = st.number_input("Porta interna do app", 1024, 65535, 3000)
+                else:
+                    porta_dom = _ger_d[_sel_d.split(" · ")[0]]
+                    st.caption(f"Porta {porta_dom} — do app `{_sel_d.split(' · ')[0]}`")
+                ok_dom = st.form_submit_button("🚀 Apontar domínio (rota + HTTPS)",
+                                               type="primary", use_container_width=True)
             if ok_dom and dom_novo.strip():
-                _d = dom_novo.strip()
-                _slug = _d.split(".")[0]
-                st.markdown("**1️⃣ DNS:** crie o subdomínio no provedor "
-                            f"(DuckDNS: add domain `{_slug}`) apontando pra `{IP_PUBLICO}`.")
-                st.markdown("**2️⃣ SSH (bloco único):**")
-                st.code(f"""sudo tee /etc/nginx/sites-available/{_slug} > /dev/null <<'EOF'
-server {{
-    listen 80;
-    server_name {_d};
-    location / {{
-        proxy_pass http://127.0.0.1:{porta_dom};
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_read_timeout 86400;
-    }}
-}}
-EOF
-sudo ln -sf /etc/nginx/sites-available/{_slug} /etc/nginx/sites-enabled/{_slug}
-sudo nginx -t && sudo systemctl reload nginx
-sudo certbot --nginx -d {_d} --redirect -m diogobsbastos@gmail.com --agree-tos --no-eff-email""",
-                        language="bash")
-                st.caption("O domínio aparece na lista abaixo sozinho depois de criado.")
+                _d = dom_novo.strip().lower()
+                with st.status(f"Apontando {_d}…", expanded=True) as _bxd:
+                    st.write("🔧 Criando rota Nginx + rodando certbot (HTTPS)…")
+                    import subprocess as _spd2
+                    _rd = _spd2.run(["sudo", "-n", "/usr/local/bin/vps_provision",
+                                     "dominio", _d, str(int(porta_dom))],
+                                    capture_output=True, text=True, timeout=180)
+                    st.code((_rd.stdout + _rd.stderr)[-1200:] or "(sem saída)")
+                    if _rd.returncode == 0 and "PRONTO" in _rd.stdout:
+                        _bxd.update(label=f"✅ {_d} no ar!", state="complete")
+                        st.success(f"https://{_d} apontando pro app. "
+                                   "(Se o certbot falhou, confira se o DNS já aponta pro IP.)")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        _bxd.update(label="Falhou — veja o log acima", state="error")
 
     st.subheader("🌍 Domínios deste servidor")
     for _dm in dominios_nginx():
@@ -2792,17 +2811,7 @@ elif pagina == "🐘 Supabase VPS":
             _bcfg = json.loads(BK_CFG.read_text())
         except Exception:
             _bcfg = {}
-        _jobs = _bcfg.get("jobs")
-        if _jobs is None:
-            _jobs = [{"id": "diario_local", "nome": "📁 Diário local (03:30)",
-                      "ativo": True, "hora": "03",
-                      "dias": [1, 2, 3, 4, 5, 6, 7],
-                      "destino": "/home/ubuntu/backups_pg", "manter_dias": 7}]
-            try:
-                BK_CFG.write_text(json.dumps({"jobs": _jobs},
-                                             ensure_ascii=False, indent=1))
-            except Exception:
-                pass
+        _jobs = _bcfg.get("jobs") or []
 
         def _salvar_jobs():
             BK_CFG.write_text(json.dumps({"jobs": _jobs},
@@ -3417,7 +3426,8 @@ elif pagina == "🔌 Acesso MCP (Claude)":
 # ============================================================
 
 elif pagina == "💾 Servidor & Limites":
-    st.title("💾 Servidor & Limites (Always Free)")
+    _oracle = "oracle" in PROVEDOR.lower()
+    st.title("💾 Servidor & Limites" + (" (Always Free)" if _oracle else ""))
 
     # ---- Histórico de uso (coletor a cada 1 min) ----
     st.subheader("📈 Histórico de uso")
@@ -3451,18 +3461,18 @@ elif pagina == "💾 Servidor & Limites":
     with st.container(border=True):
         _val = cert_validade(DOMINIO)
         c_id, c_mig = st.columns([4, 1.4], vertical_alignment="center")
-        c_mig.link_button(
-            "🔶 Abrir na Oracle", 
-            "https://cloud.oracle.com/compute/instances?region=sa-saopaulo-1",
-            use_container_width=True,
-            help="Console da Oracle Cloud — a instância escola-parque-v3 ao vivo "
-                 "(tenancy tecnicoeurio, Always Free).")
+        if _oracle:
+            c_mig.link_button(
+                "🔶 Abrir na Oracle",
+                "https://cloud.oracle.com/compute/instances?region=sa-saopaulo-1",
+                use_container_width=True,
+                help="Console da Oracle Cloud.")
         c_id.markdown(
             f"**Domínio:** [`{DOMINIO}`]({URL_BASE}) · **IP:** `{IP_PUBLICO}`  \n"
             f"🔒 **HTTPS Let's Encrypt** — "
             + (f"certificado válido até `{_val}`" if _val else "⚠️ não consegui ler o certificado")
             + " · renovação automática (certbot)  \n"
-            f"🦆 DNS: **DuckDNS** (Google `diogobsbastos@gmail.com`) · "
+            f"🦆 DNS: **DuckDNS** · "
             f"📄 Fonte única: `~/.vps_config.json` — mudou lá, o painel INTEIRO se adapta.  \n"
             f"⭐ Este é o **domínio-mãe** (painel, API LLM, MCP, campainha do webhook). "
             f"Domínios extras de apps — ex.: frontend — vivem na página 🌐 Domínios & Rotas."
@@ -3560,8 +3570,9 @@ curl -s -o /dev/null -w "%{{http_code}}\\n" https://{_nd}/admin/""",
         s3.metric("Disco /", f"{disco.total/1e9:.0f} GB")
         s4.metric("Arquitetura", (arch or "aarch64"))
         st.caption(
-            f"Shape **VM.Standard.A1.Flex** (Ampere ARM) · Brazil East (São Paulo) · "
-            f"IP `{IP_PUBLICO}` · conta **Always Free**"
+            (f"Shape **VM.Standard.A1.Flex** (Ampere ARM) · Brazil East (São Paulo) · "
+             if _oracle else f"**{PROVEDOR}** · {ARCH_CURTA} · ")
+            + f"IP `{IP_PUBLICO}`" + (" · conta **Always Free**" if _oracle else "")
         )
 
     st.divider()
@@ -3583,63 +3594,64 @@ curl -s -o /dev/null -w "%{{http_code}}\\n" https://{_nd}/admin/""",
         _, uptime = _run(["uptime", "-p"])
         r4.metric("Load 1/5/15m", carga); r4.caption(f"⏱️ {uptime}")
 
-    st.divider()
-    st.subheader("💰 Cota gratuita × cobrança")
-    st.caption(
-        "A Oracle cobra se você ULTRAPASSAR estes limites mensais. Consumo ESTIMADO desta "
-        "instância 24/7 — pra você ver a folga ANTES de criar mais recursos."
-    )
-    st.caption("🟢 Folga · 🟡 No teto do gratuito (continua R$ 0) · 🔴 Ultrapassou (gera cobrança)")
+    if _oracle:
+        st.divider()
+        st.subheader("💰 Cota gratuita × cobrança")
+        st.caption(
+            "A Oracle cobra se você ULTRAPASSAR estes limites mensais. Consumo ESTIMADO desta "
+            "instância 24/7 — pra você ver a folga ANTES de criar mais recursos."
+        )
+        st.caption("🟢 Folga · 🟡 No teto do gratuito (continua R$ 0) · 🔴 Ultrapassou (gera cobrança)")
 
-    AJUDA_OCPU = (
-        "Pense num plano pré-pago de CPU: você ganha 3.000 'horas-de-CPU' grátis por mês. "
-        "Sua máquina tem 4 CPUs, então cada hora ligada gasta 4 horas do bolo. "
-        "4 CPUs × ~720h do mês = ~2.880h. Está DENTRO do limite = R$ 0. "
-        "Só cobraria se passasse de 3.000 (ex.: ligando uma 2ª máquina ARM 24/7)."
-    )
-    AJUDA_RAM = (
-        "Mesma lógica, mas pra memória: 18.000 'GB-horas' grátis por mês. "
-        "Seus 24 GB ligados o mês todo = ~17.300 GB-h. Dentro do limite = R$ 0. "
-        "É o teto esperado de quem usa a máquina máxima do gratuito — está tudo certo."
-    )
+        AJUDA_OCPU = (
+            "Pense num plano pré-pago de CPU: você ganha 3.000 'horas-de-CPU' grátis por mês. "
+            "Sua máquina tem 4 CPUs, então cada hora ligada gasta 4 horas do bolo. "
+            "4 CPUs × ~720h do mês = ~2.880h. Está DENTRO do limite = R$ 0. "
+            "Só cobraria se passasse de 3.000 (ex.: ligando uma 2ª máquina ARM 24/7)."
+        )
+        AJUDA_RAM = (
+            "Mesma lógica, mas pra memória: 18.000 'GB-horas' grátis por mês. "
+            "Seus 24 GB ligados o mês todo = ~17.300 GB-h. Dentro do limite = R$ 0. "
+            "É o teto esperado de quem usa a máquina máxima do gratuito — está tudo certo."
+        )
 
-    import calendar as _cal
-    from datetime import datetime as _dt
-    _h = _cal.monthrange(_dt.utcnow().year, _dt.utcnow().month)[1] * 24
-    n_ocpu = (psutil.cpu_count(logical=True) or 4) if psutil else 4
-    ram_gb = round((psutil.virtual_memory().total / 1e9) if psutil else 24)
-    ocpu_h, gb_h, LIM_O, LIM_G = n_ocpu * _h, ram_gb * _h, 3000, 18000
-    egress_gb = (psutil.net_io_counters().bytes_sent / 1e9) if psutil else 0.0
+        import calendar as _cal
+        from datetime import datetime as _dt
+        _h = _cal.monthrange(_dt.utcnow().year, _dt.utcnow().month)[1] * 24
+        n_ocpu = (psutil.cpu_count(logical=True) or 4) if psutil else 4
+        ram_gb = round((psutil.virtual_memory().total / 1e9) if psutil else 24)
+        ocpu_h, gb_h, LIM_O, LIM_G = n_ocpu * _h, ram_gb * _h, 3000, 18000
+        egress_gb = (psutil.net_io_counters().bytes_sent / 1e9) if psutil else 0.0
 
-    def _lim(nome, usado, limite, un, ajuda=None):
-        pct_real = (usado / limite) if limite else 0
-        if pct_real > 1.0:
-            tag, cor = "🔴 Ultrapassou (cobrança)", "#fbeae7"
-        elif pct_real >= 0.8:
-            tag, cor = "🟡 No teto do gratuito (R$ 0)", "#fdf3df"
-        else:
-            tag, cor = "🟢 Folga", "#e6f4ec"
-        with st.container(border=True):
-            c1, c2, c3 = st.columns([3, 1.4, 1.6])
-            c1.markdown(f"**{nome}**"); c1.progress(min(pct_real, 1.0))
-            c2.metric("Usado (est.)", f"{usado:,.0f} {un}".replace(",", "."), help=ajuda)
-            c3.markdown(
-                f"<div style='background:{cor};border-radius:8px;padding:6px 10px;text-align:center;font-size:0.85em;'>"
-                f"{tag}<br>{pct_real*100:.0f}% de {limite:,} {un}</div>".replace(",", "."),
-                unsafe_allow_html=True,
-            )
+        def _lim(nome, usado, limite, un, ajuda=None):
+            pct_real = (usado / limite) if limite else 0
+            if pct_real > 1.0:
+                tag, cor = "🔴 Ultrapassou (cobrança)", "#fbeae7"
+            elif pct_real >= 0.8:
+                tag, cor = "🟡 No teto do gratuito (R$ 0)", "#fdf3df"
+            else:
+                tag, cor = "🟢 Folga", "#e6f4ec"
+            with st.container(border=True):
+                c1, c2, c3 = st.columns([3, 1.4, 1.6])
+                c1.markdown(f"**{nome}**"); c1.progress(min(pct_real, 1.0))
+                c2.metric("Usado (est.)", f"{usado:,.0f} {un}".replace(",", "."), help=ajuda)
+                c3.markdown(
+                    f"<div style='background:{cor};border-radius:8px;padding:6px 10px;text-align:center;font-size:0.85em;'>"
+                    f"{tag}<br>{pct_real*100:.0f}% de {limite:,} {un}</div>".replace(",", "."),
+                    unsafe_allow_html=True,
+                )
 
-    _lim("Compute ARM — OCPU-horas/mês ❓", ocpu_h, LIM_O, "h", ajuda=AJUDA_OCPU)
-    _lim("Compute ARM — GB-horas/mês (RAM) ❓", gb_h, LIM_G, "h", ajuda=AJUDA_RAM)
-    _lim("Block Storage (disco usado)", (disco.used/1e9) if psutil else 47, 200, "GB")
-    _lim("Tráfego de saída (desde o boot)", egress_gb, 10000, "GB")
+        _lim("Compute ARM — OCPU-horas/mês ❓", ocpu_h, LIM_O, "h", ajuda=AJUDA_OCPU)
+        _lim("Compute ARM — GB-horas/mês (RAM) ❓", gb_h, LIM_G, "h", ajuda=AJUDA_RAM)
+        _lim("Block Storage (disco usado)", (disco.used/1e9) if psutil else 47, 200, "GB")
+        _lim("Tráfego de saída (desde o boot)", egress_gb, 10000, "GB")
 
-    st.warning(
-        f"⚠️ **Leitura crítica:** esta instância (4 OCPU / 24 GB, 24/7) já consome "
-        f"~{ocpu_h/LIM_O*100:.0f}% da cota gratuita de **compute ARM** sozinha. "
-        "Criar uma SEGUNDA instância ARM ligada o tempo todo **passa do limite e gera cobrança**. "
-        "Instâncias desligadas não contam horas. Disco (200 GB) e tráfego (10 TB) têm muita folga."
-    )
+        st.warning(
+            f"⚠️ **Leitura crítica:** esta instância (4 OCPU / 24 GB, 24/7) já consome "
+            f"~{ocpu_h/LIM_O*100:.0f}% da cota gratuita de **compute ARM** sozinha. "
+            "Criar uma SEGUNDA instância ARM ligada o tempo todo **passa do limite e gera cobrança**. "
+            "Instâncias desligadas não contam horas. Disco (200 GB) e tráfego (10 TB) têm muita folga."
+        )
 
     st.divider()
     st.subheader("📁 Maiores pastas (home)")
