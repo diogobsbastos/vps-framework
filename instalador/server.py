@@ -548,6 +548,16 @@ PASSOS_DESINSTALAR = [
 # ============================================================
 # ORQUESTRADOR
 # ============================================================
+def _framework_instalado() -> bool:
+    """True se há QUALQUER coisa do framework instalada nesta VM."""
+    marcos = [
+        "/usr/local/bin/vps_provision",
+        "/etc/systemd/system/vpsadmin.service",
+        f"{HOME}/vps-admin",
+    ]
+    return any(os.path.exists(m) for m in marcos)
+
+
 def orquestrar(selec: list, modo: str, cfg: dict = None):
     if cfg:
         CONFIG["token"] = cfg.get("token", "")
@@ -555,6 +565,13 @@ def orquestrar(selec: list, modo: str, cfg: dict = None):
         CONFIG["provedor"] = (cfg.get("provedor") or "VPS").strip()
         CONFIG["dominio"] = (cfg.get("dominio") or "").strip()
     if modo == "desinstalar":
+        if not _framework_instalado():
+            with LOCK:
+                ESTADO["fase"] = "ok"; ESTADO["passos"] = []; ESTADO["pct"] = 100
+            emit({"tipo": "log", "msg": "Nada instalado — a VM já estava limpa. Nada a remover. ✓"})
+            emit({"pct": 100})
+            emit({"tipo": "fim", "fase": "ok"})
+            return
         plano = [(i, l, ic, fn) for (i, l, ic, fn) in PASSOS_DESINSTALAR]
     else:
         ordem = [c[0] for c in COMPONENTES]
@@ -634,15 +651,17 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .rhead{padding:13px 22px 11px;font-size:11.5px;text-transform:uppercase;letter-spacing:1.3px;color:#7fb8ac;border-bottom:1px solid rgba(255,255,255,.07);display:flex;justify-content:space-between;align-items:center}
 .rhactions button{background:rgba(43,189,158,.1);color:#7fb8ac;border:1px solid rgba(43,189,158,.3);border-radius:6px;cursor:pointer;font-size:10.5px;letter-spacing:.5px;padding:4px 9px;margin-left:6px}
 .rhactions button:hover{background:rgba(43,189,158,.2);color:#eafff9}
-.rbody{flex:1;overflow-y:auto;overflow-x:hidden;padding:14px 22px}
+.rbody{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;padding:14px 22px}
+#pick{flex:1;overflow-y:auto;overflow-x:hidden;min-height:0}
+#run{flex:1;display:flex;flex-direction:column;min-height:0}
 .cmp{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid rgba(255,255,255,.08);border-radius:9px;margin-bottom:7px;cursor:pointer;font-size:13.5px;background:rgba(8,18,16,.45)}
 .cmp:hover{border-color:rgba(43,189,158,.4)}.cmp input{width:16px;height:16px;accent-color:#2bbd9e;flex:none}
 .cmp i{font-size:18px;color:#5f897e;flex:none}.cmp span{flex:1;min-width:0}.cmp .req{color:#5f897e;font-size:11px;margin-left:4px}
-.steps{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
+.steps{display:flex;flex-direction:column;gap:4px;margin-bottom:10px;flex:none;max-height:42%;overflow-y:auto}
 .st{display:flex;align-items:center;gap:9px;font-size:12.5px;color:#8fb0a8;padding:5px 7px;border-radius:7px}
 .st.run{color:#eafff9;background:rgba(43,189,158,.10)}.st.ok{color:#dfeae6}.st span{flex:1;min-width:0}.st .ic{font-size:14px;flex:none}
 .st.ok .ic{color:#3ad6b0}.st.run .ic{color:#2bbd9e}.st.erro .ic{color:#ef6b6b}
-.log{background:rgba(5,12,10,.7);border:1px solid rgba(255,255,255,.08);border-radius:9px;padding:9px;height:150px;overflow:auto;font-family:ui-monospace,monospace;font-size:11px;color:#9fb0a8;white-space:pre-wrap}
+.log{flex:1;min-height:0;background:rgba(5,12,10,.7);border:1px solid rgba(255,255,255,.08);border-radius:9px;padding:9px;overflow:auto;font-family:ui-monospace,monospace;font-size:11px;color:#9fb0a8;white-space:pre-wrap}
 .foot{border-top:1px solid rgba(43,189,158,.18);padding:14px 22px;display:flex;align-items:center;gap:16px}
 .prog{flex:1;min-width:0}.prow{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:7px}
 .prow #sl{color:#bfe0d7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.prow #pct{color:#2bbd9e;font-weight:600;font-variant-numeric:tabular-nums;flex:none;margin-left:10px}
@@ -696,8 +715,8 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
       <label class=fld><span>Domínio <small>(opcional; vazio = acesso por IP)</small></span><input id=dom type=text placeholder="meuapp.duckdns.org"></label>
     </div>
     <div style="text-align:right;margin-top:16px">
-      <button class=gouni id=removerbtn onclick="removerTudo()"><i class="ti ti-trash"></i> Remover tudo</button>
-      <span class=help title="Desinstala TODOS os serviços e zera esta VM, pra reinstalar do zero. NÃO toca no código do GitHub nem nos backups.">?</span>
+      <button class=gouni id=removerbtn onclick="removerTudo()">🗑️ Remover tudo</button>
+      <span class=help title="Desinstala TODOS os serviços e zera esta VM, pra reinstalar do zero." onclick="alert('REMOVER TUDO: desinstala TODOS os serviços do framework e zera esta VM, pra você reinstalar do zero. NAO toca no codigo do GitHub nem nos seus backups.')">?</span>
     </div>
   </div>
   <div class=right>
@@ -716,7 +735,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 </div>
 <div id=modal class=modal>
   <div class=modalcard>
-    <div class=modalicon><i class="ti ti-alert-triangle"></i></div>
+    <div class=modalicon><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#ef6b6b" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 4 1.9 18.4a2 2 0 0 0 1.7 3h16.8a2 2 0 0 0 1.7-3L13.7 4a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9.5" x2="12" y2="13.5"/><circle cx="12" cy="17.2" r="0.7" fill="#ef6b6b" stroke="none"/></svg></div>
     <h3>Remover tudo desta VM?</h3>
     <p>Isto <b>para e apaga TODOS</b> os serviços (Postgres, painel, MCP, Gateway, Webhook, Sentinela, ntfy, Evolution, Backend Central), as rotas Nginx e o banco <code>evolution</code>. A VM volta <b>limpa, do zero</b>.</p>
     <p class=modalsafe>✔ O código no GitHub e seus backups NÃO são tocados.</p>
@@ -727,7 +746,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
   </div>
 </div>
 <script>
-var KEY=new URLSearchParams(location.search).get("key")||"";var IP="__IP__";var MODO="instalar";
+var KEY=new URLSearchParams(location.search).get("key")||"";var IP="__IP__";var MODO="instalar";var INSTALADO=__INSTALADO__;
 function modo(m){MODO=m;
  document.getElementById('cfg').classList.toggle('hide',m=='desinstalar');
  document.getElementById('pick').classList.toggle('hide',m=='desinstalar');
@@ -755,14 +774,19 @@ function start(){var go=document.getElementById('go');go.disabled=true;
    if(d.pct!=null){document.getElementById('bar').style.width=d.pct+'%';document.getElementById('pct').textContent=d.pct+'%';}
    if(d.tipo=='log'){var L=document.getElementById('log');L.textContent+=d.msg+'\\n';L.scrollTop=L.scrollHeight;document.getElementById('sl').textContent=d.msg.slice(0,54);}
    if(d.tipo=='fim'){es.close();var go=document.getElementById('go');go.disabled=false;
-     if(d.fase=='ok'){var dom=(document.getElementById('dom')||{}).value||'';var url=dom?('https://'+dom+'/admin/'):('http://'+IP+'/admin/');
+     if(d.fase=='ok'&&MODO=='desinstalar'){
+       document.getElementById('sl').textContent='Remoção concluída — VM limpa';document.getElementById('rhead-txt').textContent='VM zerada ✓';
+       go.textContent='↻ Recarregar p/ instalar';go.className='go';go.onclick=function(){location.reload();};INSTALADO=false;}
+     else if(d.fase=='ok'){var dom=(document.getElementById('dom')||{}).value||'';var url=dom?('https://'+dom+'/admin/'):('http://'+IP+'/admin/');
        document.getElementById('sl').textContent='Concluído — ambiente no ar';document.getElementById('rhead-txt').textContent='Instalação concluída ✓';
-       go.textContent='Entrar no painel →';go.className='go done';go.onclick=function(){window.open(url,'_blank');};}
+       go.textContent='Entrar no painel →';go.className='go done';go.onclick=function(){window.open(url,'_blank');};INSTALADO=true;}
      else{go.textContent='Erro — ver log';go.className='go uni';}}
  };}
+function _syncRemover(){var rb=document.getElementById('removerbtn'),hp=document.querySelector('.help');var v=INSTALADO?'':'none';if(rb)rb.style.display=v;if(hp)hp.style.display=v;}
+_syncRemover();
 function render(passos){var c=document.getElementById('steps');if(c.dataset.done)return;c.dataset.done=1;
  c.innerHTML=passos.map(function(p){return '<div class="st" id="st-'+p.id+'"><i class="ti '+p.icon+'"></i><span>'+p.label+'</span><i class="ic ti ti-circle"></i></div>';}).join('');}
-</script></body></html>""".replace("__CHECKBOXES__", checkboxes_html()).replace("__IP__", IP_PUB)
+</script></body></html>""".replace("__CHECKBOXES__", checkboxes_html()).replace("__IP__", IP_PUB).replace("__INSTALADO__", "true" if _framework_instalado() else "false")
 
 
 # ============================================================
