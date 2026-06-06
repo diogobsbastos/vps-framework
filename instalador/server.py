@@ -40,7 +40,7 @@ ESTADO = {
 }
 FILA = queue.Queue()       # eventos p/ o SSE
 LOCK = threading.Lock()
-CONFIG = {"token": "", "repo": REPO}   # preenchido pela tela (/start)
+CONFIG = {"token": "", "repo": REPO, "provedor": "VPS", "dominio": ""}  # da tela (/start)
 
 # Ambiente detectado na 1a etapa (o "ping"): tudo se adapta a partir daqui
 DET = {"arch": "", "deb_arch": "", "codinome": "", "python": "", "pg_arch": ""}
@@ -61,6 +61,8 @@ COMPONENTES = [
     ("sentinela", "Sentinela + timers",              "ti-bell", False),
     ("ntfy",      "ntfy (push proprio)",             "ti-send", False),
     ("evolution", "Evolution API (WhatsApp)",        "ti-brand-whatsapp", False),
+    ("libs",      "Biblioteca completa (IA/Visão/Mídia)", "ti-books", False),
+    ("https",     "HTTPS + domínio (cadeado + rota MCP)",  "ti-lock", False),
     ("ollama",    "Ollama (LLM local) — pesado",     "ti-cpu", False),
 ]
 PADRAO_MARCADOS = {c[0] for c in COMPONENTES if c[0] != "ollama"}
@@ -113,6 +115,7 @@ print(f"[instalador] token={TOKEN}  porta={PORTA}  dry={DRY}", flush=True)
 CLONE = f"{HOME}/.vps-framework-src"
 INSTALADOR_DIR = os.path.dirname(os.path.abspath(__file__))
 LOCKS_DIR = os.path.join(INSTALADOR_DIR, "..", "locks")
+OVERRIDE_DIR = os.path.join(INSTALADOR_DIR, "..", "override")  # arquivos atualizados (ex.: app.py parametrizado)
 
 APT_DEPS = (
     "build-essential python3-venv python3-dev python3-pip libpq-dev "
@@ -220,9 +223,27 @@ def _venv(pasta: str, req_rel: str):
 def p_painel():
     d = f"{HOME}/vps-admin"
     sh(como_user(f"mkdir -p {d} && cp -rf {CLONE}/. {d}/ && rm -rf {d}/.git {d}/instalador"))
+    if os.path.isdir(OVERRIDE_DIR):
+        sh(f'cp -rf "{OVERRIDE_DIR}/." "{d}/" && chown -R {ALVO_USER}:{ALVO_USER} "{d}"')
+        emit({"tipo": "log", "msg": "overlay aplicado (app.py parametrizado)"})
     _venv(d, "vps-admin.txt")
     # senha inicial do painel (gerada aqui, mostrada no fim)
     sh(como_user(f"test -s {HOME}/.vps_admin_pass || (openssl rand -hex 5 > {HOME}/.vps_admin_pass; chmod 600 {HOME}/.vps_admin_pass)"))
+    # identidade desta maquina = fonte unica do painel (~/.vps_config.json)
+    ipx = subprocess.run("curl -fsSL --max-time 6 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}'",
+                         shell=True, capture_output=True, text=True).stdout.strip()
+    repo = CONFIG.get("repo") or REPO
+    guser = ""
+    try:
+        guser = repo.split("github.com/")[1].split("/")[0]
+    except Exception:
+        guser = ""
+    cfg = {"ip": ipx, "dominio": CONFIG.get("dominio", ""),
+           "provedor": CONFIG.get("provedor", "VPS"), "arch": DET.get("arch", ""),
+           "github_user": guser}
+    cfgjson = json.dumps(cfg, ensure_ascii=False, indent=2)
+    sh(como_user(f"cat > {HOME}/.vps_config.json <<'CFGJSON'\n{cfgjson}\nCFGJSON"))
+    emit({"tipo": "log", "msg": f"identidade: {cfg}"})
     unit = f"""[Unit]
 Description=VPS Admin (painel Streamlit)
 After=network.target
@@ -361,6 +382,54 @@ def p_evolution():
     emit({"tipo": "log", "msg": "Evolution instalada — configure .env e DATABASE pelo painel depois."})
 
 
+def p_libs():
+    d = f"{HOME}/libs-base"
+    sh(como_user(f"mkdir -p {d} && python3 -m venv {d}/.venv"))
+    pip = f"{d}/.venv/bin/pip"
+    sh(como_user(f"{pip} install -q --upgrade pip"))
+    # torch CPU primeiro (evita baixar o build CUDA gigante)
+    sh(como_user(f"{pip} install -q torch==2.12.0 --index-url https://download.pytorch.org/whl/cpu"))
+    lock = os.path.join(LOCKS_DIR, "libs-base.txt")
+    sh(como_user(f"{pip} install -q -r {lock}"))
+    emit({"tipo": "log", "msg": "Biblioteca completa pronta em ~/libs-base/.venv (playwright: rode 'playwright install chromium' se precisar do browser)."})
+
+
+def p_https():
+    dom = CONFIG.get("dominio", "").strip()
+    if not dom:
+        emit({"tipo": "log", "msg": "Sem domínio informado -> mantendo HTTP por IP (sem cadeado). Para HTTPS: aponte um domínio pro IP e reinstale com o campo Domínio preenchido."})
+        return
+    try:
+        tok = open(f"{HOME}/.vps_mcp_token").read().strip()
+    except Exception:
+        tok = ""
+    rota_mcp = ""
+    if tok:
+        rota_mcp = (f"    location /mcp-{tok}/ {{\n"
+                    "        proxy_set_header Origin '';\n"
+                    "        proxy_pass http://127.0.0.1:8700/;\n"
+                    "        proxy_http_version 1.1;\n"
+                    "        proxy_set_header Host 127.0.0.1:8700;\n"
+                    "        proxy_set_header Connection '';\n"
+                    "        proxy_buffering off;\n"
+                    "        proxy_read_timeout 86400;\n"
+                    "    }\n")
+    conf = (f"server {{\n"
+            f"    listen 80;\n    server_name {dom};\n"
+            "    location = / { return 302 /admin/; }\n"
+            "    location /admin/ { proxy_pass http://127.0.0.1:8500/admin/; proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection \"upgrade\"; proxy_set_header Host $host; proxy_read_timeout 86400; }\n"
+            "    location /llm/ { proxy_pass http://127.0.0.1:8600/; proxy_buffering off; proxy_read_timeout 86400; }\n"
+            "    location /rest/v1/ { proxy_pass http://127.0.0.1:3001/; }\n"
+            f"{rota_mcp}"
+            "}\n")
+    sh(f"cat > /etc/nginx/sites-available/apps <<'NG'\n{conf}NG")
+    sh("nginx -t && systemctl reload nginx")
+    sh(f"certbot --nginx -d {dom} --redirect --agree-tos --register-unsafely-without-email -n || echo 'certbot falhou (DNS aponta pro IP? porta 80 aberta?) — segue em HTTP'")
+    if tok:
+        emit({"tipo": "log", "msg": f"Rota MCP exposta. Conector p/ o Claude: https://{dom}/mcp-{tok}/mcp"})
+    emit({"tipo": "log", "msg": f"HTTPS: se o certbot passou, painel em https://{dom}/admin/"})
+
+
 def p_ollama():
     sh("curl -fsSL https://ollama.com/install.sh | sh")
 
@@ -370,7 +439,8 @@ MAPA_PASSO = {
     "sistema": p_sistema, "nginx": p_nginx, "postgres": p_postgres, "postgrest": p_postgrest,
     "painel": p_painel, "provisionador": p_provisionador, "webhook": p_webhook,
     "mcp": p_mcp, "gateway": p_gateway, "sentinela": p_sentinela,
-    "ntfy": p_ntfy, "evolution": p_evolution, "ollama": p_ollama,
+    "ntfy": p_ntfy, "evolution": p_evolution,
+    "libs": p_libs, "https": p_https, "ollama": p_ollama,
 }
 
 
@@ -423,6 +493,8 @@ def orquestrar(selec: list, modo: str, cfg: dict = None):
     if cfg:
         CONFIG["token"] = cfg.get("token", "")
         CONFIG["repo"] = cfg.get("repo") or REPO
+        CONFIG["provedor"] = (cfg.get("provedor") or "VPS").strip()
+        CONFIG["dominio"] = (cfg.get("dominio") or "").strip()
     if modo == "desinstalar":
         plano = [(i, l, ic, fn) for (i, l, ic, fn) in PASSOS_DESINSTALAR]
     else:
@@ -519,6 +591,10 @@ def pagina():
       <input id=repo type=text value="https://github.com/diogobsbastos/vps-escola-parque-admin.git"></label>
     <label class=fld><span>Token do GitHub <small>(p/ clonar o repo privado + ligar o deploy; fica só na VM)</small></span>
       <input id=tok type=password placeholder="ghp_..."></label>
+    <label class=fld><span>Provedor <small>(só rótulo: aparece no painel)</small></span>
+      <input id=prov type=text value="GCP" placeholder="GCP / Oracle / Hetzner..."></label>
+    <label class=fld><span>Domínio <small>(opcional; vazio = acesso por IP em http)</small></span>
+      <input id=dom type=text placeholder="meuapp.duckdns.org"></label>
   </div>
   <div id=pick>__CHECKBOXES__</div>
   <div id=run class=hide>
@@ -547,7 +623,9 @@ function start(){
  fetch('/start?key='+KEY,{method:'POST',headers:{'Content-Type':'application/json'},
    body:JSON.stringify({modo:MODO,componentes:sel(),
      token:(document.getElementById('tok')||{}).value||'',
-     repo:(document.getElementById('repo')||{}).value||''})});
+     repo:(document.getElementById('repo')||{}).value||'',
+     provedor:(document.getElementById('prov')||{}).value||'VPS',
+     dominio:(document.getElementById('dom')||{}).value||''})});
  var es=new EventSource('/progress?key='+KEY);
  es.onmessage=function(e){var d=JSON.parse(e.data);
    if(d.tipo=='reset'){render(d.passos);}
