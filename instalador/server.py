@@ -115,10 +115,15 @@ def _detectar_ip_pub():
     except Exception:
         return "SEU-IP"
 IP_PUB = _detectar_ip_pub()
-VERSAO = "v0.9.0"
+VERSAO = "v0.10.0"
 try:
     import datetime as _dt
-    _BUILD = _dt.datetime.fromtimestamp(os.path.getmtime(__file__)).strftime("%d/%m %H:%M")
+    try:
+        from zoneinfo import ZoneInfo
+        _tz = ZoneInfo("America/Sao_Paulo")
+    except Exception:
+        _tz = None
+    _BUILD = _dt.datetime.fromtimestamp(os.path.getmtime(__file__), _tz).strftime("%d/%m %H:%M")
 except Exception:
     _BUILD = "?"
 
@@ -606,14 +611,99 @@ PASSOS_DESINSTALAR = [
 # ============================================================
 # ORQUESTRADOR
 # ============================================================
+# ============================================================
+# PONTE SSH (modo "Outro servidor") — paramiko so e usado se conectar
+# ============================================================
+try:
+    import paramiko
+except Exception:
+    paramiko = None
+
+SSH = {"client": None, "host": "", "user": ""}
+
+
+def _exec(cmd, timeout=60):
+    """Roda um comando por SSH se conectado; senao local. Retorna (rc, saida)."""
+    cli = SSH.get("client")
+    if cli:
+        try:
+            _i, _o, _e = cli.exec_command(cmd, timeout=timeout)
+            out = _o.read().decode("utf-8", "ignore")
+            err = _e.read().decode("utf-8", "ignore")
+            rc = _o.channel.recv_exit_status()
+            return rc, out + err
+        except Exception as e:
+            return 1, str(e)
+    r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    return r.returncode, (r.stdout + r.stderr)
+
+
+def _existe(path):
+    rc, _ = _exec(f"test -e '{path}'")
+    return rc == 0
+
+
+def _home():
+    if SSH.get("client"):
+        u = SSH.get("user") or "root"
+        return "/root" if u == "root" else f"/home/{u}"
+    return HOME
+
+
+def ssh_conectar(host, port, user, auth, key_text, senha):
+    if paramiko is None:
+        return False, "Instalador sem 'paramiko'. No PC: pip install paramiko (no .exe ja vem embutido)."
+    if not host or not user:
+        return False, "Informe o host e o usuario."
+    try:
+        cli = paramiko.SSHClient()
+        cli.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        kw = dict(hostname=host, port=int(port or 22), username=user, timeout=12,
+                  banner_timeout=12, auth_timeout=12, look_for_keys=False, allow_agent=False)
+        if auth == "senha":
+            kw["password"] = senha or ""
+        else:
+            import io
+            pk = None
+            for kcls in (getattr(paramiko, "Ed25519Key", None), paramiko.RSAKey,
+                         getattr(paramiko, "ECDSAKey", None)):
+                if not kcls:
+                    continue
+                try:
+                    pk = kcls.from_private_key(io.StringIO(key_text or ""))
+                    break
+                except Exception:
+                    continue
+            if pk is None:
+                return False, "Chave invalida (use OpenSSH/RSA/ECDSA/Ed25519, sem senha na chave)."
+            kw["pkey"] = pk
+        cli.connect(**kw)
+        SSH["client"] = cli
+        SSH["host"] = host
+        SSH["user"] = user
+        return True, f"Conectado em {user}@{host}"
+    except Exception as e:
+        return False, f"Falha na conexao SSH: {e}"
+
+
+def ssh_desconectar():
+    cli = SSH.get("client")
+    if cli:
+        try:
+            cli.close()
+        except Exception:
+            pass
+    SSH.update(client=None, host="", user="")
+
+
 def _framework_instalado() -> bool:
-    """True se há QUALQUER coisa do framework instalada nesta VM."""
+    """True se há QUALQUER coisa do framework instalada no alvo (local ou SSH)."""
     marcos = [
         "/usr/local/bin/vps_provision",
         "/etc/systemd/system/vpsadmin.service",
-        f"{HOME}/vps-admin",
+        f"{_home()}/vps-admin",
     ]
-    return any(os.path.exists(m) for m in marcos)
+    return any(_existe(m) for m in marcos)
 
 
 INSPECT_ITENS = [
@@ -636,42 +726,50 @@ INSPECT_ITENS = [
 def _status_unidade(tipo: str, alvo: str) -> str:
     """ativo (rodando) | inativo (instalado mas parado) | ausente (nao existe)."""
     if tipo == "file":
-        return "ativo" if os.path.exists(alvo) else "ausente"
+        return "ativo" if _existe(alvo) else "ausente"
     unit = alvo if "." in alvo else alvo + ".service"
-    existe = subprocess.run(f"systemctl cat {unit}", shell=True,
-                            capture_output=True).returncode == 0
-    if not existe:
+    rc, _ = _exec(f"systemctl cat {unit}")
+    if rc != 0:
         return "ausente"
-    act = subprocess.run(f"systemctl is-active {unit}", shell=True,
-                         capture_output=True, text=True).stdout.strip()
-    return "ativo" if act == "active" else "inativo"
+    _, out = _exec(f"systemctl is-active {unit}")
+    return "ativo" if out.strip() == "active" else "inativo"
 
 
 def inspecionar() -> dict:
-    """Raio-X do servidor onde o instalador esta rodando (sem SSH: local)."""
-    import socket
+    """Raio-X do alvo: local (este servidor) ou remoto (SSH conectado)."""
+    remoto = bool(SSH.get("client"))
     cfg = {}
-    try:
-        cfg = json.loads(open(f"{HOME}/.vps_config.json").read())
-    except Exception:
-        cfg = {}
+    rc, raw = _exec(f"cat '{_home()}/.vps_config.json' 2>/dev/null")
+    if rc == 0 and raw.strip():
+        try:
+            cfg = json.loads(raw)
+        except Exception:
+            cfg = {}
 
-    def _sh(c):
-        return subprocess.run(c, shell=True, capture_output=True, text=True).stdout.strip()
+    def _o(c):
+        return _exec(c)[1].strip()
 
     itens = [{"label": lb, "icon": ic, "status": _status_unidade(tp, al)}
              for (lb, ic, tp, al) in INSPECT_ITENS]
     ativos = sum(1 for i in itens if i["status"] == "ativo")
+    if remoto:
+        host = _o("hostname") or SSH.get("host", "")
+        ip = SSH.get("host", "")
+    else:
+        import socket
+        host = socket.gethostname()
+        ip = IP_PUB
     return {
+        "remoto": remoto,
         "instalado": _framework_instalado(),
-        "host": socket.gethostname(),
-        "ip": IP_PUB,
+        "host": host,
+        "ip": ip,
         "provedor": (cfg.get("provedor") or cfg.get("provider") or "").strip(),
         "dominio": (cfg.get("dominio") or "").strip(),
-        "arch": _sh("uname -m") or "?",
-        "os": (_sh("lsb_release -ds 2>/dev/null") or "").strip('"'),
-        "python": _sh("python3 --version"),
-        "disco": _sh("df -h / | tail -1 | awk '{print $3\" de \"$2\" (\"$5\" usado)\"}'"),
+        "arch": _o("uname -m") or "?",
+        "os": (_o("lsb_release -ds 2>/dev/null")).strip('"'),
+        "python": _o("python3 --version"),
+        "disco": _o("df -h / | tail -1 | awk '{print $3\" de \"$2\" (\"$5\" usado)\"}'"),
         "ativos": ativos,
         "total": len(itens),
         "itens": itens,
@@ -739,15 +837,48 @@ def orquestrar(selec: list, modo: str, cfg: dict = None):
 # ============================================================
 # WIZARD (HTML embutido)
 # ============================================================
+STATUS_COMP = {
+    "nginx": ("svc", "nginx"),
+    "postgres": ("svc", "postgresql"),
+    "postgrest": ("svc", "postgrest"),
+    "painel": ("svc", "vpsadmin"),
+    "provisionador": ("file", "/usr/local/bin/vps_provision"),
+    "webhook": ("svc", "vpswebhook"),
+    "mcp": ("svc", "vpsmcp"),
+    "gateway": ("svc", "llmgateway"),
+    "sentinela": ("timer", "vpssentinela.timer"),
+    "ntfy": ("svc", "ntfy"),
+    "evolution": ("svc", "evolution"),
+    "worker": ("svc", "backendcentral"),
+    "ollama": ("svc", "ollama"),
+    "libs": ("file", f"{HOME}/libs-base/.venv"),
+    "https": ("file", "/etc/letsencrypt/live"),
+}
+
+
 def checkboxes_html():
     out = []
     for cid, label, icon, obrig in COMPONENTES:
-        mark = "checked" if (cid in PADRAO_MARCADOS or obrig) else ""
-        dis = "disabled" if obrig else ""
+        st = None
+        if cid in STATUS_COMP:
+            tp, al = STATUS_COMP[cid]
+            st = _status_unidade(tp, al)
         tag = " <span class='req'>obrigatório</span>" if obrig else ""
+        badge = ""
+        if st == "ativo":           # ja instalado e rodando -> nao remarca, mas pode reparar
+            mark, dis = "", ""
+            badge = "<span class='bg bg-ok'>✓ instalado</span>"
+        elif st == "inativo":       # instalado mas parado -> marca pra reparar
+            mark, dis = "checked", ("disabled" if obrig else "")
+            badge = "<span class='bg bg-warn'>⚠ parado</span>"
+        else:                       # ausente ou etapa sem deteccao (detectar/sistema)
+            mark = "checked" if (cid in PADRAO_MARCADOS or obrig) else ""
+            dis = "disabled" if obrig else ""
+            if st == "ausente":
+                badge = "<span class='bg bg-new'>instalar</span>"
         out.append(
             f"<label class='cmp'><input type='checkbox' value='{cid}' {mark} {dis}>"
-            f"<i class='ti {icon}'></i><span>{label}{tag}</span></label>")
+            f"<i class='ti {icon}'></i><span>{label}{tag}</span>{badge}</label>")
     return "\n".join(out)
 
 
@@ -801,6 +932,10 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .cmp{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid rgba(255,255,255,.08);border-radius:9px;margin-bottom:7px;cursor:pointer;font-size:13.5px;background:rgba(8,18,16,.45)}
 .cmp:hover{border-color:rgba(43,189,158,.4)}.cmp input{width:16px;height:16px;accent-color:#2bbd9e;flex:none}
 .cmp i{font-size:18px;color:#5f897e;flex:none}.cmp span{flex:1;min-width:0}.cmp .req{color:#5f897e;font-size:11px;margin-left:4px}
+.bg{font-size:10px;padding:2px 9px;border-radius:99px;font-weight:600;letter-spacing:.3px;white-space:nowrap;flex:none}
+.bg-ok{background:rgba(43,189,158,.13);color:#3ad6b0;border:1px solid rgba(43,189,158,.33)}
+.bg-warn{background:rgba(239,107,107,.12);color:#ff9b9b;border:1px solid rgba(239,107,107,.4)}
+.bg-new{background:rgba(127,184,172,.10);color:#9fd4c8;border:1px solid rgba(127,184,172,.28)}
 .steps{display:flex;flex-direction:column;gap:4px;margin-bottom:10px;flex:none;max-height:42%;overflow-y:auto}
 .st{display:flex;align-items:center;gap:9px;font-size:12.5px;color:#8fb0a8;padding:5px 7px;border-radius:7px}
 .st.run{color:#eafff9;background:rgba(43,189,158,.10)}.st.ok{color:#dfeae6}.st span{flex:1;min-width:0}.st .ic{font-size:14px;flex:none}
@@ -822,6 +957,8 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .origemtabs{display:flex;gap:6px;margin-bottom:12px}
 .otab{flex:1;padding:8px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:transparent;color:#8fb0a8;font-size:12px;cursor:pointer}
 .otab.on{border-color:#2bbd9e;color:#eafff9;background:rgba(43,189,158,.08)}
+.gconn{width:100%;padding:9px;border:1px solid #2bbd9e;border-radius:8px;background:rgba(43,189,158,.13);color:#eafff9;font-size:13px;cursor:pointer;font-weight:600}
+.gconn:hover{background:rgba(43,189,158,.22)}.gconn:disabled{opacity:.55;cursor:default}
 .dropzone{border:1.5px dashed rgba(43,189,158,.4);border-radius:11px;padding:20px;text-align:center;cursor:pointer;background:rgba(43,189,158,.04);transition:.18s}
 .dropzone:hover,.dropzone.over{border-color:#2bbd9e;background:rgba(43,189,158,.13)}
 .dzicon{font-size:26px;margin-bottom:6px}
@@ -860,6 +997,25 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
     <div class=emblem><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#3ad6b0" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="4" width="18" height="6.2" rx="1.6"/><rect x="3" y="13.8" width="18" height="6.2" rx="1.6"/><circle cx="6.6" cy="7.1" r="1" fill="#3ad6b0" stroke="none"/><circle cx="6.6" cy="16.9" r="1" fill="#3ad6b0" stroke="none"/><line x1="10" y1="7.1" x2="17.5" y2="7.1"/><line x1="10" y1="16.9" x2="17.5" y2="16.9"/></svg></div>
     <h1>VPS ADMIN</h1>
     <div class=tag>Sua central de servidor · completa e pré-moldada</div>
+    <div class=origemtabs style="margin-top:18px"><button type=button class="otab on" id=alvo-local onclick="alvo('local')">🖥 Este servidor</button><button type=button class=otab id=alvo-ssh onclick="alvo('ssh')">🌐 Outro servidor</button></div>
+    <div id=sshform class=hide style="margin-top:12px;border:1px solid rgba(43,189,158,.2);border-radius:10px;padding:12px 13px;background:rgba(43,189,158,.04)">
+      <label class=fld><span>Host / IP do servidor</span><input id=sh_host type=text placeholder="ex: 203.0.113.10"></label>
+      <div style="display:flex;gap:8px">
+        <label class=fld style="flex:1"><span>Usuário SSH</span><input id=sh_user type=text placeholder="ubuntu / root"></label>
+        <label class=fld style="width:74px"><span>Porta</span><input id=sh_port type=text value="22"></label>
+      </div>
+      <div class=origemtabs><button type=button class="otab on" id=auth-chave onclick="authm('chave')">🔑 Chave</button><button type=button class=otab id=auth-senha onclick="authm('senha')">🔒 Senha</button></div>
+      <div id=row-chave style="margin-top:9px">
+        <div class=fld style="margin-bottom:6px"><span>Chave privada (.pem / .key)</span></div>
+        <input id=sh_key type=file style="font-size:12px;color:#8fb0a8;max-width:100%">
+        <div id=sh_keyname style="font-size:11px;color:#5f897e;margin-top:4px"></div>
+      </div>
+      <div id=row-senha class=hide style="margin-top:9px">
+        <label class=fld><span>Senha SSH</span><input id=sh_pass type=password placeholder="senha do usuário"></label>
+      </div>
+      <button id=btnconn class=gconn onclick="conectar()" style="margin-top:11px">Conectar e inspecionar</button>
+      <div id=connst style="font-size:12px;margin-top:8px"></div>
+    </div>
     <div id=cfg style="margin-top:22px">
       <div class=origemtabs><button type=button class="otab on" id=otab-git onclick="origem('git')">⬇️ Do Git</button><button type=button class=otab id=otab-arq onclick="origem('arquivo')">📁 De arquivo</button></div>
       <div id=org-git>
@@ -919,12 +1075,32 @@ function modo(m){MODO=m;
  document.getElementById('rhead-txt').textContent=m=='instalar'?'Componentes a instalar':'Remover tudo desta VM';
  var g=document.getElementById('go');g.textContent=m=='instalar'?'Instalar':'Remover tudo';g.className=m=='instalar'?'go':'go uni';}
 function origem(m){ORIGEM=m;document.getElementById("otab-git").classList.toggle("on",m=="git");document.getElementById("otab-arq").classList.toggle("on",m=="arquivo");document.getElementById("org-git").classList.toggle("hide",m=="arquivo");document.getElementById("org-arq").classList.toggle("hide",m=="git");}
+var ALVO='local';var KEYTEXT='';window._auth='chave';
+function alvo(m){ALVO=m;
+ document.getElementById('alvo-local').classList.toggle('on',m=='local');
+ document.getElementById('alvo-ssh').classList.toggle('on',m=='ssh');
+ document.getElementById('sshform').classList.toggle('hide',m=='local');
+ if(m=='local'){fetch('/desconectar?key='+KEY,{method:'POST'});carregarServidor();}
+ else{var b=document.getElementById('servidor');if(b)b.innerHTML="<div class=srvload>🌐 Conecte-se a um servidor por SSH para inspecioná-lo.</div>";}}
+function authm(a){window._auth=a;
+ document.getElementById('auth-chave').classList.toggle('on',a=='chave');
+ document.getElementById('auth-senha').classList.toggle('on',a=='senha');
+ document.getElementById('row-chave').classList.toggle('hide',a=='senha');
+ document.getElementById('row-senha').classList.toggle('hide',a=='chave');}
+function conectar(){var btn=document.getElementById('btnconn');btn.disabled=true;btn.textContent='Conectando…';
+ var body={host:(document.getElementById('sh_host')||{}).value||'',port:(document.getElementById('sh_port')||{}).value||'22',user:(document.getElementById('sh_user')||{}).value||'',auth:window._auth||'chave',key_text:KEYTEXT,senha:(document.getElementById('sh_pass')||{}).value||''};
+ fetch('/conectar?key='+KEY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json();}).then(function(d){
+  btn.disabled=false;btn.textContent='Conectar e inspecionar';var st=document.getElementById('connst');
+  if(d.ok){st.innerHTML="<span style='color:#3ad6b0'>✓ "+d.msg+"</span>";carregarServidor();}
+  else{st.innerHTML="<span style='color:#ff9b9b'>✗ "+d.msg+"</span>";}
+ }).catch(function(){btn.disabled=false;btn.textContent='Conectar e inspecionar';});}
+(function(){var f=document.getElementById('sh_key');if(!f)return;f.addEventListener('change',function(){var x=f.files&&f.files[0];if(!x)return;var r=new FileReader();r.onload=function(){KEYTEXT=String(r.result);var l=document.getElementById('sh_keyname');if(l)l.textContent='🔑 '+x.name;};r.readAsText(x);});})();
 function marcarTodos(v){[].slice.call(document.querySelectorAll('#pick input:not([disabled])')).forEach(function(x){x.checked=!!v;});}
 function sel(){return [].slice.call(document.querySelectorAll('#pick input:checked')).map(function(x){return x.value;});}
 function removerTudo(){document.getElementById('modal').classList.add('show');}
 function fecharModal(){document.getElementById('modal').classList.remove('show');}
 function confirmarRemover(){fecharModal();MODO='desinstalar';document.getElementById('rhead-txt').textContent='Removendo tudo…';start();}
-function start(){var go=document.getElementById('go');go.disabled=true;
+function start(){if(ALVO=='ssh'){alert('Modo "Outro servidor": por enquanto só a inspeção remota está pronta (P1). A instalação por SSH é o próximo passo (P2).');return;}var go=document.getElementById('go');go.disabled=true;
  document.getElementById('pick').classList.add('hide');document.getElementById('uni').classList.add('hide');document.getElementById('run').classList.remove('hide');var _sv=document.getElementById('servidor');if(_sv)_sv.classList.add('hide');var _ra=document.getElementById('rhactions');if(_ra)_ra.classList.add('hide');var _rb=document.getElementById('removerbtn');if(_rb)_rb.style.display='none';
  document.getElementById('rhead-txt').textContent=MODO=='instalar'?'Instalando…':'Removendo…';
  var payload={modo:MODO,componentes:sel(),origem:ORIGEM,token:(document.getElementById('tok')||{}).value||'',repo:(document.getElementById('repo')||{}).value||'',provedor:(document.getElementById('prov')||{}).value||'VPS',dominio:(document.getElementById('dom')||{}).value||''};
@@ -971,7 +1147,7 @@ function carregarServidor(){fetch("/inspecionar?key="+KEY).then(function(r){retu
  var dots=d.itens.map(function(i){var c=corStatus(i.status);return "<span class=srvitem><span class=srvdot style='color:"+c+";background:"+c+"'></span>"+i.label+"</span>";}).join("");
  var idln="🖥 "+d.host+(d.provedor?" · "+d.provedor:"")+" · "+d.arch+(d.os?" · "+d.os:"");
  var resumo=d.instalado?("<b style='color:#2bbd9e'>"+d.ativos+"/"+d.total+"</b> serviços ativos"):("<b style='color:#e0b057'>VM limpa</b> — nada instalado ainda");
- box.innerHTML="<div class=srvtop><span class=srvttl>ESTE SERVIDOR</span><span class=srvtog id=srvtog onclick=toggleSrv()>ver tudo ▾</span></div>"+
+ box.innerHTML="<div class=srvtop><span class=srvttl>"+(d.remoto?'SERVIDOR REMOTO · SSH':'ESTE SERVIDOR')+"</span><span class=srvtog id=srvtog onclick=toggleSrv()>ver tudo ▾</span></div>"+
    "<div class=srvid>"+idln+"</div>"+
    "<div class=srvsum>"+resumo+(d.ip?" · <span style='color:#7fb8ac'>IP "+d.ip+"</span>":"")+(d.disco?" · disco "+d.disco:"")+"</div>"+
    "<div id=srvdet class='srvdet hide'>"+dots+"</div>";
@@ -1065,6 +1241,22 @@ class H(BaseHTTPRequestHandler):
             threading.Thread(target=orquestrar,
                              args=(data.get("componentes", []), data.get("modo", "instalar"), data),
                              daemon=True).start()
+        elif urlparse(self.path).path == "/conectar":
+            n = int(self.headers.get("Content-Length", 0))
+            d = json.loads(self.rfile.read(n) or "{}")
+            ok, msg = ssh_conectar(d.get("host", "").strip(), d.get("port", "22"),
+                                   d.get("user", "").strip(), d.get("auth", "chave"),
+                                   d.get("key_text", ""), d.get("senha", ""))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": ok, "msg": msg}).encode())
+        elif urlparse(self.path).path == "/desconectar":
+            ssh_desconectar()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
         else:
             self.send_response(404)
             self.end_headers()
