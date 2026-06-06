@@ -616,7 +616,9 @@ def pagina():
 *,*::before,*::after{box-sizing:border-box}
 html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;font-family:system-ui,Segoe UI,sans-serif}
 .bg{position:fixed;inset:0;width:100%;height:100%;z-index:0}
-.shell{position:relative;z-index:2;height:100vh;display:flex;gap:22px;padding:26px}
+.shell{position:relative;z-index:2;height:100vh;display:flex;flex-direction:column;padding:26px}
+.main{flex:1;display:flex;gap:22px;min-height:0}
+.footbar{margin-top:18px;display:flex;align-items:center;gap:18px;background:rgba(8,18,16,.62);backdrop-filter:blur(10px);border:1px solid rgba(43,189,158,.2);border-radius:14px;padding:13px 22px}
 .left{flex:0 0 36%;max-width:420px;min-width:300px;display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden}
 .emblem{width:62px;height:62px;border-radius:15px;border:1px solid rgba(43,189,158,.45);background:rgba(43,189,158,.12);display:flex;align-items:center;justify-content:center;margin-bottom:12px}
 .emblem i{font-size:28px;color:#3ad6b0}
@@ -629,7 +631,9 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .fld span{display:block;margin-bottom:4px}.fld small{color:#5f897e}
 .fld input{width:100%;padding:9px 11px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(5,12,10,.6);color:#dfeae6;font-size:13px}
 .right{flex:1;min-width:0;display:flex;flex-direction:column;background:rgba(8,18,16,.6);backdrop-filter:blur(11px);border:1px solid rgba(43,189,158,.2);border-radius:16px;overflow:hidden}
-.rhead{padding:15px 22px 11px;font-size:11.5px;text-transform:uppercase;letter-spacing:1.3px;color:#7fb8ac;border-bottom:1px solid rgba(255,255,255,.07)}
+.rhead{padding:13px 22px 11px;font-size:11.5px;text-transform:uppercase;letter-spacing:1.3px;color:#7fb8ac;border-bottom:1px solid rgba(255,255,255,.07);display:flex;justify-content:space-between;align-items:center}
+.rhactions a{color:#7fb8ac;cursor:pointer;font-size:11px;text-transform:none;letter-spacing:0}
+.rhactions a:hover{color:#2bbd9e;text-decoration:underline}
 .rbody{flex:1;overflow-y:auto;overflow-x:hidden;padding:14px 22px}
 .cmp{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid rgba(255,255,255,.08);border-radius:9px;margin-bottom:7px;cursor:pointer;font-size:13.5px;background:rgba(8,18,16,.45)}
 .cmp:hover{border-color:rgba(43,189,158,.4)}.cmp input{width:16px;height:16px;accent-color:#2bbd9e;flex:none}
@@ -646,7 +650,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .track #bar{height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,#2bbd9e,#3ad6b0);box-shadow:0 0 12px rgba(43,189,158,.5);transition:width .45s}
 .go{flex:none;background:linear-gradient(90deg,#2bbd9e,#16a085);color:#04130d;border:none;border-radius:10px;padding:11px 28px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:0 6px 18px rgba(43,189,158,.35)}
 .go:disabled{opacity:.5;cursor:default}.go.uni{background:linear-gradient(90deg,#e06b6b,#c0392b);color:#fff}.go.done{background:linear-gradient(90deg,#3ad6b0,#16a085)}
-.modolink{display:inline-block;margin-top:16px;font-size:12px;color:#e08c8c;cursor:pointer;text-decoration:none}
+.modolink{flex:none;font-size:12px;color:#e08c8c;cursor:pointer;text-decoration:none;white-space:nowrap}
 .modolink:hover{text-decoration:underline}
 .hide{display:none}
 </style></head><body>
@@ -664,6 +668,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
  <path d="M940 130 C 908 182 846 182 820 214 C 826 150 878 108 940 130 Z" fill="url(#steel)" stroke="#2bbd9e" stroke-width="1" stroke-opacity=".5"/>
 </svg>
 <div class=shell>
+  <div class=main>
   <div class=left>
     <div class=emblem><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#3ad6b0" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="4" width="18" height="6.2" rx="1.6"/><rect x="3" y="13.8" width="18" height="6.2" rx="1.6"/><circle cx="6.6" cy="7.1" r="1" fill="#3ad6b0" stroke="none"/><circle cx="6.6" cy="16.9" r="1" fill="#3ad6b0" stroke="none"/><line x1="10" y1="7.1" x2="17.5" y2="7.1"/><line x1="10" y1="16.9" x2="17.5" y2="16.9"/></svg></div>
     <h1>VPS ADMIN</h1>
@@ -674,19 +679,20 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
       <label class=fld><span>Provedor <small>(rótulo no painel)</small></span><input id=prov type=text value="GCP" placeholder="GCP / Oracle / Hetzner..."></label>
       <label class=fld><span>Domínio <small>(opcional; vazio = acesso por IP)</small></span><input id=dom type=text placeholder="meuapp.duckdns.org"></label>
     </div>
-    <a id=modolink class=modolink onclick="toggleModo()">🗑️ Remover tudo (limpar a VM)</a>
   </div>
   <div class=right>
-    <div class=rhead id=rhead>Componentes a instalar</div>
+    <div class=rhead><span id=rhead-txt>Componentes a instalar</span><span class=rhactions id=rhactions><a onclick="marcarTodos(1)">marcar todos</a> · <a onclick="marcarTodos(0)">limpar</a></span></div>
     <div class=rbody>
       <div id=pick>__CHECKBOXES__</div>
       <div id=uni class=hide><div style="border:1px solid rgba(224,107,107,.4);background:rgba(224,107,107,.08);border-radius:10px;padding:14px 16px;font-size:13px;color:#f3c0c0;line-height:1.7"><b style="color:#ff9b9b"><i class="ti ti-alert-triangle"></i> Isto remove TODO o framework desta VM</b><br>Para e apaga: painel, PostgreSQL, PostgREST, MCP, Gateway, Webhook, Sentinela, ntfy, Evolution, Backend Central, provisionador, rotas Nginx e o banco <code>evolution</code>.<br><span style="color:#9fb0a8">A VM volta <b>limpa, do zero</b>. O código no GitHub e teus backups <b>não</b> são tocados.</span></div></div>
       <div id=run class=hide><div class=steps id=steps></div><div class=log id=log></div></div>
     </div>
-    <div class=foot>
-      <button class=go id=go onclick=start()>Instalar</button>
-      <div class=prog><div class=prow><span id=sl>Pronto para instalar</span><span id=pct>0%</span></div><div class=track><div id=bar></div></div></div>
-    </div>
+  </div>
+  </div>
+  <div class=footbar>
+    <button class=go id=go onclick=start()>Instalar</button>
+    <div class=prog><div class=prow><span id=sl>Pronto para instalar</span><span id=pct>0%</span></div><div class=track><div id=bar></div></div></div>
+    <a id=modolink class=modolink onclick="removerTudo()">🗑️ Remover tudo (limpar a VM)</a>
   </div>
 </div>
 <script>
@@ -696,14 +702,16 @@ function modo(m){MODO=m;
  document.getElementById('cfg').classList.toggle('hide',m=='desinstalar');
  document.getElementById('pick').classList.toggle('hide',m=='desinstalar');
  document.getElementById('uni').classList.toggle('hide',m!='desinstalar');
- document.getElementById('rhead').textContent=m=='instalar'?'Componentes a instalar':'Remover tudo desta VM';
+ document.getElementById('rhead-txt').textContent=m=='instalar'?'Componentes a instalar':'Remover tudo desta VM';
  var ml=document.getElementById('modolink');ml.textContent=m=='instalar'?'🗑️ Remover tudo (limpar a VM)':'← Voltar pra instalação';ml.style.color=m=='instalar'?'#e08c8c':'#7fb8ac';
  var g=document.getElementById('go');g.textContent=m=='instalar'?'Instalar':'Remover tudo';g.className=m=='instalar'?'go':'go uni';}
+function marcarTodos(v){[].slice.call(document.querySelectorAll('#pick input:not([disabled])')).forEach(function(x){x.checked=!!v;});}
 function sel(){return [].slice.call(document.querySelectorAll('#pick input:checked')).map(function(x){return x.value;});}
+function removerTudo(){MODO='desinstalar';document.getElementById('rhead-txt').textContent='Removendo tudo…';start();}
 function start(){var go=document.getElementById('go');go.disabled=true;
- if(MODO=='desinstalar'&&!confirm('Remover TODOS os serviços e pastas do framework?')){go.disabled=false;return;}
- document.getElementById('pick').classList.add('hide');document.getElementById('uni').classList.add('hide');document.getElementById('run').classList.remove('hide');
- document.getElementById('rhead').textContent=MODO=='instalar'?'Instalando…':'Removendo…';
+ if(MODO=='desinstalar'&&!confirm('Remover TODOS os serviços (Postgres, painel, MCP...), rotas Nginx e o banco evolution desta VM?\n\nA VM volta limpa. (O código no GitHub e seus backups NÃO são tocados.)')){go.disabled=false;return;}
+ document.getElementById('pick').classList.add('hide');document.getElementById('uni').classList.add('hide');document.getElementById('run').classList.remove('hide');var _ra=document.getElementById('rhactions');if(_ra)_ra.classList.add('hide');
+ document.getElementById('rhead-txt').textContent=MODO=='instalar'?'Instalando…':'Removendo…';
  fetch('/start?key='+KEY,{method:'POST',headers:{'Content-Type':'application/json'},
    body:JSON.stringify({modo:MODO,componentes:sel(),token:(document.getElementById('tok')||{}).value||'',
      repo:(document.getElementById('repo')||{}).value||'',provedor:(document.getElementById('prov')||{}).value||'VPS',
@@ -717,7 +725,7 @@ function start(){var go=document.getElementById('go');go.disabled=true;
    if(d.tipo=='log'){var L=document.getElementById('log');L.textContent+=d.msg+'\n';L.scrollTop=L.scrollHeight;document.getElementById('sl').textContent=d.msg.slice(0,54);}
    if(d.tipo=='fim'){es.close();var go=document.getElementById('go');go.disabled=false;
      if(d.fase=='ok'){var dom=(document.getElementById('dom')||{}).value||'';var url=dom?('https://'+dom+'/admin/'):('http://'+IP+'/admin/');
-       document.getElementById('sl').textContent='Concluído — ambiente no ar';document.getElementById('rhead').textContent='Instalação concluída ✓';
+       document.getElementById('sl').textContent='Concluído — ambiente no ar';document.getElementById('rhead-txt').textContent='Instalação concluída ✓';
        go.textContent='Entrar no painel →';go.className='go done';go.onclick=function(){window.open(url,'_blank');};}
      else{go.textContent='Erro — ver log';go.className='go uni';}}
  };}
