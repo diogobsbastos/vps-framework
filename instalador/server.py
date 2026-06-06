@@ -122,7 +122,7 @@ def _detectar_ip_pub():
     except Exception:
         return "SEU-IP"
 IP_PUB = _detectar_ip_pub()
-VERSAO = "v0.13.17"
+VERSAO = "v0.13.18"
 try:
     import datetime as _dt
     try:
@@ -334,7 +334,7 @@ RestartSec=5
 WantedBy=multi-user.target
 """
     sh(f"cat > /etc/systemd/system/vpsadmin.service <<'U'\n{unit}U")
-    sh("systemctl daemon-reload && systemctl enable --now vpsadmin")
+    sh("systemctl daemon-reload && systemctl enable vpsadmin && systemctl restart vpsadmin")
 
 
 def p_provisionador():
