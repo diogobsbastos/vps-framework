@@ -687,7 +687,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .mbcancel{flex:1;background:transparent;border:1px solid rgba(255,255,255,.22);color:#dfeae6;border-radius:10px;padding:11px;font-size:14px;cursor:pointer}
 .mbcancel:hover{background:rgba(255,255,255,.06)}
 .mbok{flex:1;background:linear-gradient(90deg,#e06b6b,#c0392b);border:none;color:#fff;border-radius:10px;padding:11px;font-size:14px;font-weight:700;cursor:pointer}
-.hide{display:none}
+.hide{display:none !important}
 </style></head><body>
 <svg class=bg viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid slice">
  <defs>
