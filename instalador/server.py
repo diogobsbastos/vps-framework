@@ -122,7 +122,7 @@ def _detectar_ip_pub():
     except Exception:
         return "SEU-IP"
 IP_PUB = _detectar_ip_pub()
-VERSAO = "v0.13.7"
+VERSAO = "v0.13.11"
 try:
     import datetime as _dt
     try:
@@ -142,10 +142,15 @@ print(f"[instalador] token={TOKEN}  porta={PORTA}  dry={DRY}", flush=True)
 # ETAPAS DE INSTALACAO (cada uma idempotente)
 # ============================================================
 CLONE = f"{HOME}/.vps-framework-src"
-INSTALADOR_DIR = os.path.dirname(os.path.abspath(__file__))
-LOCKS_DIR = os.path.join(INSTALADOR_DIR, "..", "locks")
-OVERRIDE_DIR = os.path.join(INSTALADOR_DIR, "..", "override")  # arquivos atualizados (ex.: app.py parametrizado)
-FRAMEWORK_DIR = os.path.dirname(INSTALADOR_DIR)               # raiz do pacote (pasta acima de instalador/)
+if getattr(sys, "frozen", False):
+    # Empacotado como .exe (PyInstaller): dados sao extraidos em sys._MEIPASS
+    FRAMEWORK_DIR = sys._MEIPASS
+    INSTALADOR_DIR = os.path.join(FRAMEWORK_DIR, "instalador")
+else:
+    INSTALADOR_DIR = os.path.dirname(os.path.abspath(__file__))
+    FRAMEWORK_DIR = os.path.dirname(INSTALADOR_DIR)           # raiz do pacote (pasta acima de instalador/)
+LOCKS_DIR = os.path.join(FRAMEWORK_DIR, "locks")
+OVERRIDE_DIR = os.path.join(FRAMEWORK_DIR, "override")        # arquivos atualizados (ex.: app.py parametrizado)
 DEFAULT_SRC_DIR = os.path.join(FRAMEWORK_DIR, "default_src")  # codigo embarcado: padrao sem Git/sem token
 
 APT_DEPS = (
@@ -1098,7 +1103,7 @@ STATUS_COMP = {
     "evolution": ("svc", "evolution"),
     "worker": ("svc", "backendcentral"),
     "ollama": ("svc", "ollama"),
-    "libs": ("file", f"{HOME}/libs-base/.venv"),
+    "libs": ("file", "~/libs-base/.venv"),
     "https": ("file", "/etc/letsencrypt/live"),
 }
 
@@ -1130,8 +1135,13 @@ def checkboxes_html():
     out = []
     # status de TODOS os componentes em UMA chamada (rapido). No PC sem SSH, pula.
     comp_status = {}
-    if SSH.get("client") or not EH_PC:
-        chaves = [(cid, STATUS_COMP[cid]) for (cid, _l, _i, _ob) in COMPONENTES if cid in STATUS_COMP]
+    inspecionavel = bool(SSH.get("client")) or not EH_PC
+    if inspecionavel:
+        home = _home()
+        def _resolv(par):
+            tp, al = par
+            return (tp, (home + al[1:]) if al.startswith("~") else al)
+        chaves = [(cid, _resolv(STATUS_COMP[cid])) for (cid, _l, _i, _ob) in COMPONENTES if cid in STATUS_COMP]
         res = _status_lote([par for (_c, par) in chaves])
         comp_status = {chaves[i][0]: res[i] for i in range(len(chaves))}
     for cid, label, icon, obrig in COMPONENTES:
@@ -1151,6 +1161,8 @@ def checkboxes_html():
             dis = "disabled" if obrig else ""
             if st == "ausente":
                 badge = "<span class='cb cb-new'>instalar</span>"
+        if not badge and inspecionavel and cid not in STATUS_COMP:
+            badge = "<span class='cb cb-base'>preparo</span>"
         cls = "cmp inst" if inst else "cmp"
         out.append(
             f"<label class='{cls}'><input type='checkbox' value='{cid}' {mark} {dis} {inst}>"
@@ -1212,6 +1224,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .cb-ok{background:rgba(43,189,158,.13);color:#3ad6b0;border:1px solid rgba(43,189,158,.33)}
 .cb-warn{background:rgba(239,107,107,.12);color:#ff9b9b;border:1px solid rgba(239,107,107,.4)}
 .cb-new{background:rgba(224,176,87,.14);color:#e8c074;border:1px solid rgba(224,176,87,.45)}
+.cb-base{background:rgba(127,184,172,.08);color:#8fb0a8;border:1px solid rgba(127,184,172,.22)}
 .cmp.inst{opacity:.55}
 .cmp.inst:hover{opacity:.85}
 .steps{display:flex;flex-direction:column;gap:4px;margin-bottom:10px;flex:none;max-height:42%;overflow-y:auto}
@@ -1264,6 +1277,21 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .mbcancel{flex:1;background:transparent;border:1px solid rgba(255,255,255,.22);color:#dfeae6;border-radius:10px;padding:11px;font-size:14px;cursor:pointer}
 .mbcancel:hover{background:rgba(255,255,255,.06)}
 .mbok{flex:1;background:linear-gradient(90deg,#e06b6b,#c0392b);border:none;color:#fff;border-radius:10px;padding:11px;font-size:14px;font-weight:700;cursor:pointer}
+.okwrap{flex:1;min-height:0;overflow:auto;display:flex;align-items:center;justify-content:center;padding:18px}
+.okcard{width:100%;max-width:480px;text-align:center;background:linear-gradient(180deg,rgba(43,189,158,.09),rgba(8,18,16,.5));border:1px solid rgba(43,189,158,.3);border-radius:20px;padding:34px 30px;box-shadow:0 20px 60px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.05)}
+.okicon{width:66px;height:66px;margin:0 auto 16px;border-radius:50%;background:linear-gradient(135deg,#3ad6b0,#16a085);display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 8px rgba(43,189,158,.12),0 10px 26px rgba(43,189,158,.45)}
+.oktitle{font-size:23px;font-weight:700;color:#eafff9;letter-spacing:.3px}
+.oksub{font-size:13px;color:#8fb0a8;margin:6px 0 24px}
+.okfield{text-align:left;margin-bottom:14px}
+.oklabel{font-size:10.5px;text-transform:uppercase;letter-spacing:1.4px;color:#7fb8ac;margin-bottom:6px}
+.oklink{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 15px;border:1px solid rgba(43,189,158,.28);border-radius:11px;background:rgba(5,12,10,.5);color:#3ad6b0;text-decoration:none;font-size:14px;font-family:ui-monospace,monospace;word-break:break-all}
+.oklink:hover{border-color:#2bbd9e;background:rgba(43,189,158,.1)}
+.oklink span{color:#7fb8ac;flex:none;font-size:15px}
+.okpwrow{display:flex;gap:9px;align-items:stretch}
+.okpw{flex:1;padding:12px 15px;border:1px solid rgba(43,189,158,.28);border-radius:11px;background:rgba(5,12,10,.5);color:#eafff9;font-size:18px;font-weight:600;font-family:ui-monospace,monospace;letter-spacing:1px;display:flex;align-items:center;user-select:all}
+.okcopy{flex:none;padding:0 18px;border:none;border-radius:11px;background:linear-gradient(90deg,#2bbd9e,#16a085);color:#04130d;font-size:13px;font-weight:700;cursor:pointer}
+.okcopy:hover{filter:brightness(1.08)}
+.okwarn{display:flex;align-items:center;gap:7px;justify-content:center;margin-top:22px;font-size:12px;color:#e8c074;background:rgba(224,176,87,.08);border:1px solid rgba(224,176,87,.25);border-radius:10px;padding:10px 14px}
 .hide{display:none !important}
 </style></head><body>
 <div class=ver>VPS Admin __VERSAO__ · build __BUILD__</div>
@@ -1434,11 +1462,15 @@ function enviar(payload){
        document.getElementById('sl').textContent='Remoção concluída — VM limpa';document.getElementById('rhead-txt').textContent='VM zerada ✓';
        go.textContent='↻ Recarregar p/ instalar';go.className='go';go.onclick=function(){location.reload();};INSTALADO=false;}
      else if(d.fase=='ok'){var dom=(document.getElementById('dom')||{}).value||'';var url=d.painel||(dom?('https://'+dom+'/admin/'):('http://'+IP+'/admin/'));var senha=d.senha||'';
-       document.getElementById('sl').textContent='Concluído — ambiente no ar';document.getElementById('rhead-txt').textContent='Instalação concluída ✓';
-       document.getElementById('run').innerHTML='<div class=successbox><div class=sok>✅ Instalação concluída!</div>'+
-         '<div class=srow>🌐 Endereço do painel</div><div class=sval><a href="'+url+'" target=_blank>'+url+'</a></div>'+
-         '<div class=srow>🔑 Senha do admin</div><div class=sval><span class=spw id=spw>'+senha+'</span> <button class=scopy id=scopybtn onclick="copiarSenha()">📋 copiar</button></div>'+
-         '<div class=shint>⚠️ Guarde esta senha — ela é gerada só uma vez. Clique em <b>Entrar no painel</b> embaixo pra abrir.</div></div>';
+       document.getElementById('sl').textContent='Concluído — ambiente no ar';document.getElementById('rhead-txt').textContent='Pronto ✓';
+       document.getElementById('run').innerHTML='<div class=okwrap><div class=okcard>'+
+         '<div class=okicon><svg viewBox="0 0 24 24" width=34 height=34 fill=none stroke="#04130d" stroke-width=2.8 stroke-linecap=round stroke-linejoin=round><path d="M20 6 9 17l-5-5"/></svg></div>'+
+         '<div class=oktitle>Parabéns, seu servidor está pronto!</div>'+
+         '<div class=oksub>Tudo foi instalado e está no ar. Guarde os dados abaixo.</div>'+
+         '<div class=okfield><div class=oklabel>Endereço do painel</div><a class=oklink href="'+url+'" target=_blank>'+url+' <span>&#8599;</span></a></div>'+
+         '<div class=okfield><div class=oklabel>Senha do administrador</div><div class=okpwrow><code class=okpw id=spw>'+senha+'</code><button class=okcopy id=scopybtn onclick="copiarSenha()">Copiar</button></div></div>'+
+         '<div class=okwarn><i class="ti ti-alert-triangle"></i> Guarde esta senha — ela é gerada só uma vez.</div>'+
+         '</div></div>';
        go.textContent='Entrar no painel →';go.className='go done';go.onclick=function(){window.open(url,'_blank');};INSTALADO=true;}
      else{go.textContent='Erro — ver log';go.className='go uni';}}
  };}
@@ -1449,7 +1481,7 @@ arq.addEventListener("change",function(){show(arq.files[0]);});
 ["dragleave","drop"].forEach(function(ev){dz.addEventListener(ev,function(e){e.preventDefault();dz.classList.remove("over");});});
 dz.addEventListener("drop",function(e){if(e.dataTransfer&&e.dataTransfer.files.length){try{arq.files=e.dataTransfer.files;}catch(_){}show(e.dataTransfer.files[0]);window._dropFile=e.dataTransfer.files[0];}});
 })();
-function copiarSenha(){var el=document.getElementById('spw');if(!el)return;var t=el.textContent;if(navigator.clipboard){navigator.clipboard.writeText(t);}var b=document.getElementById('scopybtn');if(b){b.textContent='✅ copiado';}}
+function copiarSenha(){var el=document.getElementById('spw');if(!el)return;var t=el.textContent;if(navigator.clipboard){navigator.clipboard.writeText(t);}var b=document.getElementById('scopybtn');if(b){b.textContent='Copiado!';}}
 function _syncRemover(){var rb=document.getElementById('removerbtn'),hp=document.querySelector('.help');var v=INSTALADO?'':'none';if(rb)rb.style.display=v;if(hp)hp.style.display=v;}
 function corStatus(st){return st=="ativo"?"#2bbd9e":st=="inativo"?"#ef6b6b":"#52706a";}
 function toggleSrv(){var d=document.getElementById("srvdet"),t=document.getElementById("srvtog");if(!d)return;var h=d.classList.toggle("hide");if(t)t.textContent=h?"ver tudo ▾":"ocultar ▴";}
@@ -1624,6 +1656,12 @@ def main():
     ESTADO["modo"] = modo
     srv = ThreadingHTTPServer(("0.0.0.0", PORTA), H)
     print(f"\n  Abra no navegador:  http://SEU-IP:{PORTA}/?key={TOKEN}\n", flush=True)
+    if getattr(sys, "frozen", False):
+        try:
+            import webbrowser
+            webbrowser.open(f"http://127.0.0.1:{PORTA}/?key={TOKEN}")
+        except Exception:
+            pass
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
