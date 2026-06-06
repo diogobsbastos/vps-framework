@@ -40,7 +40,8 @@ ESTADO = {
 }
 FILA = queue.Queue()       # eventos p/ o SSE
 LOCK = threading.Lock()
-CONFIG = {"token": "", "repo": REPO, "provedor": "VPS", "dominio": "", "origem": "git", "arquivo_b64": "", "arquivo_nome": ""}  # da tela (/start)
+CLI = False  # True no modo --cli (headless, no alvo): ecoa eventos no stdout
+CONFIG = {"token": "", "repo": REPO, "provedor": "VPS", "dominio": "", "origem": "local", "arquivo_b64": "", "arquivo_nome": ""}  # da tela (/start)
 
 # Ambiente detectado na 1a etapa (o "ping"): tudo se adapta a partir daqui
 DET = {"arch": "", "deb_arch": "", "codinome": "", "python": "", "pg_arch": ""}
@@ -83,6 +84,11 @@ def emit(ev: dict):
         if ev.get("tipo") == "fim":
             ESTADO["fase"] = ev["fase"]
     FILA.put(ev)
+    if CLI:
+        try:
+            print("__EV__" + json.dumps(ev, ensure_ascii=False), flush=True)
+        except Exception:
+            pass
 
 
 def sh(cmd: str, timeout: int = 1200):
@@ -115,7 +121,7 @@ def _detectar_ip_pub():
     except Exception:
         return "SEU-IP"
 IP_PUB = _detectar_ip_pub()
-VERSAO = "v0.11.2"
+VERSAO = "v0.13.0"
 try:
     import datetime as _dt
     try:
@@ -138,6 +144,8 @@ CLONE = f"{HOME}/.vps-framework-src"
 INSTALADOR_DIR = os.path.dirname(os.path.abspath(__file__))
 LOCKS_DIR = os.path.join(INSTALADOR_DIR, "..", "locks")
 OVERRIDE_DIR = os.path.join(INSTALADOR_DIR, "..", "override")  # arquivos atualizados (ex.: app.py parametrizado)
+FRAMEWORK_DIR = os.path.dirname(INSTALADOR_DIR)               # raiz do pacote (pasta acima de instalador/)
+DEFAULT_SRC_DIR = os.path.join(FRAMEWORK_DIR, "default_src")  # codigo embarcado: padrao sem Git/sem token
 
 APT_DEPS = (
     "build-essential python3-venv python3-dev python3-pip libpq-dev "
@@ -164,6 +172,7 @@ def p_sistema():
     sh("export DEBIAN_FRONTEND=noninteractive; apt-get update -y")
     sh(f"export DEBIAN_FRONTEND=noninteractive; apt-get install -y {APT_DEPS}")
     arq = CONFIG.get("arquivo_b64") or ""
+    origem = (CONFIG.get("origem") or "local").strip()
     if arq:
         import base64
         nome = CONFIG.get("arquivo_nome", "codigo.tar.gz")
@@ -181,13 +190,26 @@ def p_sistema():
                      f"test -n \"$SRC\" && rm -rf {CLONE} && cp -rf \"$SRC\" {CLONE} && echo \"codigo extraido de: $SRC\""))
         emit({"tipo": "log", "msg": f"Código instalado do arquivo '{nome}' (sem Git, sem token)."})
         return
+    # (2) Git (avancado) — so quando explicitamente escolhido
+    if origem == "git":
+        repo = CONFIG.get("repo") or REPO
+        tok = (CONFIG.get("token") or "").strip()
+        url = repo
+        if tok and repo.startswith("https://github.com/"):
+            url = repo.replace("https://", f"https://x-access-token:{tok}@")
+            sh(como_user(f"printf '%s' '{tok}' > {HOME}/.github_token && chmod 600 {HOME}/.github_token"))
+        sh(como_user(f"rm -rf {CLONE} && git clone --depth 1 {url} {CLONE}"))
+        return
+    # (3) PADRAO: codigo embarcado no proprio instalador (sem Git, sem token)
+    if os.path.isdir(DEFAULT_SRC_DIR) and os.path.isfile(os.path.join(DEFAULT_SRC_DIR, "app.py")):
+        sh(como_user(f"rm -rf {CLONE} && mkdir -p {CLONE} && cp -rf '{DEFAULT_SRC_DIR}/.' {CLONE}/"))
+        emit({"tipo": "log", "msg": "Codigo embarcado (padrao) instalado - sem Git, sem token."})
+        return
+    # (4) Fallback: sem codigo embarcado -> tenta o repo padrao (publico/sem token)
     repo = CONFIG.get("repo") or REPO
-    tok = (CONFIG.get("token") or "").strip()
-    url = repo
-    if tok and repo.startswith("https://github.com/"):
-        url = repo.replace("https://", f"https://x-access-token:{tok}@")
-        sh(como_user(f"printf '%s' '{tok}' > {HOME}/.github_token && chmod 600 {HOME}/.github_token"))
-    sh(como_user(f"rm -rf {CLONE} && git clone --depth 1 {url} {CLONE}"))
+    emit({"tipo": "log", "msg": "Sem codigo embarcado; tentando o repo padrao (sem token)."})
+    if sh(como_user(f"rm -rf {CLONE} && git clone --depth 1 {repo} {CLONE}")) != 0:
+        raise RuntimeError("Sem codigo embarcado e o repo padrao exige token. Abra Opcoes -> Do Git e informe o token do GitHub.")
 
 
 def p_nginx():
@@ -664,18 +686,25 @@ def ssh_conectar(host, port, user, auth, key_text, senha):
             kw["password"] = senha or ""
         else:
             import io
+            kt = (key_text or "").replace("\r\n", "\n").replace("\r", "\n")
+            if not kt.strip():
+                return False, "Nenhuma chave recebida — selecione/arraste o arquivo da chave privada."
             pk = None
+            ult = ""
             for kcls in (getattr(paramiko, "Ed25519Key", None), paramiko.RSAKey,
-                         getattr(paramiko, "ECDSAKey", None)):
+                         getattr(paramiko, "ECDSAKey", None), getattr(paramiko, "DSSKey", None)):
                 if not kcls:
                     continue
                 try:
-                    pk = kcls.from_private_key(io.StringIO(key_text or ""))
+                    pk = kcls.from_private_key(io.StringIO(kt))
                     break
-                except Exception:
+                except paramiko.PasswordRequiredException:
+                    return False, "Essa chave tem senha (passphrase). Gere uma sem senha pro teste."
+                except Exception as e:
+                    ult = str(e)
                     continue
             if pk is None:
-                return False, "Chave invalida (use OpenSSH/RSA/ECDSA/Ed25519, sem senha na chave)."
+                return False, f"Nao consegui ler a chave ({ult[:90]}). Use OpenSSH/RSA/ECDSA/Ed25519 sem senha."
             kw["pkey"] = pk
         cli.connect(**kw)
         SSH["client"] = cli
@@ -776,29 +805,172 @@ def inspecionar() -> dict:
     }
 
 
+def _montar_plano(selec, modo):
+    """Fonte unica do plano de etapas (id,label,icon,fn) — usada pelo motor
+    local (orquestrar) e pelo remoto (instalar_remoto)."""
+    if modo == "desinstalar":
+        return [(i, l, ic, fn) for (i, l, ic, fn) in PASSOS_DESINSTALAR]
+    ordem = [c[0] for c in COMPONENTES]
+    sel = [c for c in COMPONENTES if c[0] in selec or c[3]]
+    sel.sort(key=lambda c: ordem.index(c[0]))
+    return [(c[0], c[1], c[2], MAPA_PASSO[c[0]]) for c in sel]
+
+
+# ---------- P2: instalacao remota por SSH (o PC vira orquestrador) ----------
+_SFTP_IGN = {".git", "__pycache__", ".venv", "_tmp_extract"}
+
+
+def _sftp_mkdirs(sftp, caminho):
+    partes = [p for p in caminho.strip("/").split("/") if p]
+    atual = ""
+    for p in partes:
+        atual += "/" + p
+        try:
+            sftp.stat(atual)
+        except IOError:
+            try:
+                sftp.mkdir(atual)
+            except IOError:
+                pass
+
+
+def _sftp_subir_dir(sftp, local_dir, remoto_dir):
+    """Sobe uma pasta local inteira pro alvo (recursivo), pulando lixo."""
+    _sftp_mkdirs(sftp, remoto_dir)
+    for nome in sorted(os.listdir(local_dir)):
+        if nome in _SFTP_IGN or nome.endswith(".pyc") or nome.endswith(".zip"):
+            continue
+        lp = os.path.join(local_dir, nome)
+        rp = remoto_dir + "/" + nome
+        if os.path.isdir(lp):
+            _sftp_subir_dir(sftp, lp, rp)
+        else:
+            sftp.put(lp, rp)
+
+
+def instalar_remoto(selec, modo, cfg=None):
+    """Roda no PC: envia o framework pro alvo por SFTP e executa server.py --cli
+    la por SSH, repassando cada evento (__EV__) pra mesma barra (FILA/SSE)."""
+    cli = SSH.get("client")
+    if not cli:
+        emit({"tipo": "log", "msg": "Sem conexao SSH ativa."})
+        emit({"tipo": "fim", "fase": "erro"})
+        return
+    user = SSH.get("user") or "root"
+    host = SSH.get("host") or ""
+
+    # plano local ANTES de tudo (pro front montar a lista via snapshot do /progress)
+    with LOCK:
+        ESTADO["fase"] = "rodando"
+        ESTADO["modo"] = modo
+        ESTADO["passos"] = [{"id": i, "label": l, "icon": ic, "status": "pendente"}
+                            for (i, l, ic, _) in _montar_plano(selec, modo)]
+        ESTADO["pct"] = 0
+    emit({"tipo": "reset"})
+
+    base_remoto = "/tmp/vps-framework"
+    try:
+        # 1) SFTP: subir o pacote (instalador/override/locks/default_src)
+        emit({"tipo": "log", "msg": f"### Enviando framework p/ {user}@{host} (SFTP)..."})
+        _exec(f"rm -rf {base_remoto}")
+        sftp = cli.open_sftp()
+        try:
+            for sub in ("instalador", "override", "locks", "default_src"):
+                lp = os.path.join(FRAMEWORK_DIR, sub)
+                if os.path.isdir(lp):
+                    emit({"tipo": "log", "msg": f"  -> {sub}/"})
+                    _sftp_subir_dir(sftp, lp, base_remoto + "/" + sub)
+        finally:
+            sftp.close()
+
+        # 2) garantir python3 no alvo
+        emit({"tipo": "log", "msg": "Verificando python3 no alvo..."})
+        _rc, _out = _exec("which python3 || (sudo apt-get update -y && sudo apt-get install -y python3)")
+        if (_out or "").strip():
+            emit({"tipo": "log", "msg": (_out or "").strip()[:300]})
+
+        # 3) disparar o --cli no alvo (config em base64)
+        import base64 as _b64
+        payload = {"selec": selec, "modo": modo, "cfg": cfg or {}}
+        b64 = _b64.b64encode(json.dumps(payload).encode()).decode()
+        remoto_py = base_remoto + "/instalador/server.py"
+        comando = (f"sudo VPS_USER={user} VPS_KEY=cli VPS_CLI_CFG={b64} "
+                   f"python3 {remoto_py} --cli")
+        emit({"tipo": "log", "msg": f"### Instalando em {user}@{host} (modo nativo)..."})
+
+        chan = cli.get_transport().open_session()
+        chan.get_pty()
+        chan.exec_command(comando)
+        chan.settimeout(0.5)
+        buf = ""
+        fim_remoto = [None]
+
+        def _consumir(linha):
+            linha = linha.rstrip("\r")
+            if not linha:
+                return
+            if linha.startswith("__EV__"):
+                try:
+                    ev = json.loads(linha[6:])
+                except Exception:
+                    emit({"tipo": "log", "msg": linha})
+                    return
+                if ev.get("tipo") == "fim":
+                    fim_remoto[0] = ev   # segura o 'fim' ate checar o exit status
+                    return
+                emit(ev)
+            else:
+                emit({"tipo": "log", "msg": linha})
+
+        while True:
+            try:
+                pedaco = chan.recv(65536)
+            except Exception:
+                pedaco = b""
+            if pedaco:
+                buf += pedaco.decode("utf-8", "ignore")
+                linhas = buf.split("\n")
+                buf = linhas.pop()
+                for ln in linhas:
+                    _consumir(ln)
+            elif chan.exit_status_ready():
+                break
+            else:
+                time.sleep(0.05)
+        if buf:
+            for ln in buf.split("\n"):
+                _consumir(ln)
+
+        rc = chan.recv_exit_status()
+        if rc != 0:
+            emit({"tipo": "log", "msg": f"Instalacao remota terminou com codigo {rc}."})
+            emit(fim_remoto[0] if (fim_remoto[0] and fim_remoto[0].get("fase") == "erro")
+                 else {"tipo": "fim", "fase": "erro"})
+            return
+        emit({"tipo": "log", "msg": f"OK: instalacao remota concluida em {user}@{host}."})
+        emit(fim_remoto[0] or {"tipo": "fim", "fase": "ok"})
+    except Exception as e:
+        emit({"tipo": "log", "msg": f"ERRO na instalacao remota: {e}"})
+        emit({"tipo": "fim", "fase": "erro"})
+
+
 def orquestrar(selec: list, modo: str, cfg: dict = None):
     if cfg:
         CONFIG["token"] = cfg.get("token", "")
         CONFIG["repo"] = cfg.get("repo") or REPO
         CONFIG["provedor"] = (cfg.get("provedor") or "VPS").strip()
         CONFIG["dominio"] = (cfg.get("dominio") or "").strip()
-        CONFIG["origem"] = cfg.get("origem", "git")
+        CONFIG["origem"] = cfg.get("origem", "local")
         CONFIG["arquivo_b64"] = cfg.get("arquivo_b64", "")
         CONFIG["arquivo_nome"] = cfg.get("arquivo_nome", "")
-    if modo == "desinstalar":
-        if not _framework_instalado():
-            with LOCK:
-                ESTADO["fase"] = "ok"; ESTADO["passos"] = []; ESTADO["pct"] = 100
-            emit({"tipo": "log", "msg": "Nada instalado — a VM já estava limpa. Nada a remover. ✓"})
-            emit({"pct": 100})
-            emit({"tipo": "fim", "fase": "ok"})
-            return
-        plano = [(i, l, ic, fn) for (i, l, ic, fn) in PASSOS_DESINSTALAR]
-    else:
-        ordem = [c[0] for c in COMPONENTES]
-        sel = [c for c in COMPONENTES if c[0] in selec or c[3]]
-        sel.sort(key=lambda c: ordem.index(c[0]))
-        plano = [(c[0], c[1], c[2], MAPA_PASSO[c[0]]) for c in sel]
+    if modo == "desinstalar" and not _framework_instalado():
+        with LOCK:
+            ESTADO["fase"] = "ok"; ESTADO["passos"] = []; ESTADO["pct"] = 100
+        emit({"tipo": "log", "msg": "Nada instalado — a VM já estava limpa. Nada a remover. ✓"})
+        emit({"pct": 100})
+        emit({"tipo": "fim", "fase": "ok"})
+        return
+    plano = _montar_plano(selec, modo)
 
     with LOCK:
         ESTADO["fase"] = "rodando"
@@ -968,6 +1140,8 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .sshbtns{display:flex;gap:8px;margin-top:10px}
 .sshbtns button{flex:1;padding:7px;border:1px solid #2bbd9e;border-radius:7px;background:rgba(43,189,158,.12);color:#eafff9;font-size:12px;cursor:pointer}
 .sshbtns button.ghost{border-color:rgba(239,107,107,.45);background:rgba(239,107,107,.08);color:#ff9b9b}
+.cfghdr{margin-top:16px;font-size:12px;color:#9fb8b1;cursor:pointer;user-select:none;padding:9px 12px;border:1px solid rgba(255,255,255,.1);border-radius:8px;background:rgba(8,18,16,.4);display:flex;justify-content:space-between;align-items:center}
+.cfghdr small{color:#5f897e;font-weight:400}.cfghdr:hover{color:#eafff9;border-color:rgba(43,189,158,.4)}
 .dropzone{border:1.5px dashed rgba(43,189,158,.4);border-radius:11px;padding:20px;text-align:center;cursor:pointer;background:rgba(43,189,158,.04);transition:.18s}
 .dropzone:hover,.dropzone.over{border-color:#2bbd9e;background:rgba(43,189,158,.13)}
 .dzicon{font-size:26px;margin-bottom:6px}
@@ -1016,8 +1190,8 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
       <div class=origemtabs><button type=button class="otab on" id=auth-chave onclick="authm('chave')">🔑 Chave</button><button type=button class=otab id=auth-senha onclick="authm('senha')">🔒 Senha</button></div>
       <div id=row-chave style="margin-top:9px">
         <div class=fld style="margin-bottom:6px"><span>Chave privada (.pem / .key)</span></div>
-        <input id=sh_key type=file style="font-size:12px;color:#8fb0a8;max-width:100%">
-        <div id=sh_keyname style="font-size:11px;color:#5f897e;margin-top:4px"></div>
+        <div id=keyzone class=dropzone onclick="document.getElementById('sh_key').click()" style="padding:14px;font-size:12px;color:#9fb8b1"><span id=keyzonetxt>Arraste a chave aqui ou clique pra escolher</span></div>
+        <input id=sh_key type=file style="display:none">
       </div>
       <div id=row-senha class=hide style="margin-top:9px">
         <label class=fld><span>Senha SSH</span><input id=sh_pass type=password placeholder="senha do usuário"></label>
@@ -1026,9 +1200,13 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
       <div id=connst style="font-size:12px;margin-top:8px"></div>
       <div style="text-align:center;margin-top:7px"><span onclick="cancelarConn()" style="font-size:11.5px;color:#7fb8ac;cursor:pointer">cancelar</span></div>
     </div>
-    <div id=cfg style="margin-top:22px">
-      <div class=origemtabs><button type=button class="otab on" id=otab-git onclick="origem('git')">⬇️ Do Git</button><button type=button class=otab id=otab-arq onclick="origem('arquivo')">📁 De arquivo</button></div>
-      <div id=org-git>
+    <div class=cfghdr onclick="toggleCfg()">⚙ Opções de instalação <small>(código · provedor · domínio)</small> <span id=cfgcaret>▾</span></div>
+    <div id=cfg class=hide style="margin-top:10px">
+      <div class=origemtabs><button type=button class="otab on" id=otab-local onclick="origem('local')">✓ Código local</button><button type=button class=otab id=otab-git onclick="origem('git')">⬇️ Do Git</button><button type=button class=otab id=otab-arq onclick="origem('arquivo')">📁 De arquivo</button></div>
+      <div id=org-local>
+        <div style="font-size:12px;color:#9fd4c8;background:rgba(43,189,158,.06);border:1px solid rgba(43,189,158,.2);border-radius:8px;padding:10px 12px;line-height:1.6">✓ Usa o <b>código embarcado</b> no instalador (o mesmo do projeto). Sem repo, sem token — nenhum segredo fica no servidor. <small style="color:#5f897e">Recomendado.</small></div>
+      </div>
+      <div id=org-git class=hide>
         <label class=fld><span>Repo do código (privado)</span><input id=repo type=text value="https://github.com/diogobsbastos/vps-escola-parque-admin.git"></label>
         <label class=fld><span>Token do GitHub <small>(clona o repo privado + liga o deploy; fica só na VM)</small></span><input id=tok type=password placeholder="ghp_..."></label>
       </div>
@@ -1077,27 +1255,28 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
   </div>
 </div>
 <script>
-var KEY=new URLSearchParams(location.search).get("key")||"";var IP="__IP__";var MODO="instalar";var INSTALADO=__INSTALADO__;var ORIGEM="git";
+var KEY=new URLSearchParams(location.search).get("key")||"";var IP="__IP__";var MODO="instalar";var INSTALADO=__INSTALADO__;var ORIGEM="local";
 function modo(m){MODO=m;
  document.getElementById('cfg').classList.toggle('hide',m=='desinstalar');
  document.getElementById('pick').classList.toggle('hide',m=='desinstalar');
  document.getElementById('uni').classList.toggle('hide',m!='desinstalar');
  document.getElementById('rhead-txt').textContent=m=='instalar'?'Componentes a instalar':'Remover tudo desta VM';
  var g=document.getElementById('go');g.textContent=m=='instalar'?'Instalar':'Remover tudo';g.className=m=='instalar'?'go':'go uni';}
-function origem(m){ORIGEM=m;document.getElementById("otab-git").classList.toggle("on",m=="git");document.getElementById("otab-arq").classList.toggle("on",m=="arquivo");document.getElementById("org-git").classList.toggle("hide",m=="arquivo");document.getElementById("org-arq").classList.toggle("hide",m=="git");}
+function origem(m){ORIGEM=m;[["local","local"],["git","git"],["arq","arquivo"]].forEach(function(p){var t=document.getElementById("otab-"+p[0]);if(t)t.classList.toggle("on",p[1]==m);var b=document.getElementById("org-"+p[0]);if(b)b.classList.toggle("hide",p[1]!=m);});}
 var KEYTEXT='';window._auth='chave';var CONECTADO=false;
 function estadoSSH(){fetch('/ssh_estado?key='+KEY).then(function(r){return r.json();}).then(renderSSH).catch(function(){});}
 function renderSSH(d){CONECTADO=!!(d&&d.conectado);var box=document.getElementById('sshpanel');if(!box)return;
- if(CONECTADO){box.innerHTML="<div class=sshrow><span class='sshdot on'></span> Conectado via SSH</div>"+
+ if(CONECTADO){window.SSHWHO=d.user+"@"+d.host;box.innerHTML="<div class=sshrow><span class='sshdot on'></span> Conectado via SSH</div>"+
    "<div class=sshwho>"+d.user+"@"+d.host+"</div>"+
-   "<div class=sshbtns><button type=button onclick=abrirConn()>Trocar servidor</button><button type=button class=ghost onclick=desconectar()>Voltar a este servidor</button></div>";}
+   "<div class=sshbtns><button type=button onclick=abrirConn()>Trocar servidor</button><button type=button class=ghost onclick=desconectar()>✕ Desconectar</button></div>";}
  else{box.innerHTML="<div class=sshrow><span class='sshdot on'></span> Operando neste servidor</div>"+
    "<div class=sshwho>"+(d.host||"")+(d.ip?(" · "+d.ip):"")+"</div>"+
    "<div class=sshmuted>O instalador está rodando dentro dele (sem SSH).</div>"+
    "<button type=button class=gconn onclick=abrirConn() style='margin-top:9px'>🔌 Conectar a outro servidor (SSH)</button>";}}
+function toggleCfg(){var c=document.getElementById('cfg'),k=document.getElementById('cfgcaret');var h=c.classList.toggle('hide');if(k)k.textContent=h?'▾':'▴';}
 function abrirConn(){document.getElementById('sshform').classList.remove('hide');}
 function cancelarConn(){document.getElementById('sshform').classList.add('hide');document.getElementById('connst').innerHTML='';}
-function desconectar(){fetch('/desconectar?key='+KEY,{method:'POST'}).then(function(){estadoSSH();carregarServidor();});}
+function desconectar(){fetch('/desconectar?key='+KEY,{method:'POST'}).then(function(){location.reload();});}
 function authm(a){window._auth=a;
  document.getElementById('auth-chave').classList.toggle('on',a=='chave');
  document.getElementById('auth-senha').classList.toggle('on',a=='senha');
@@ -1107,19 +1286,24 @@ function conectar(){var btn=document.getElementById('btnconn');btn.disabled=true
  var body={host:(document.getElementById('sh_host')||{}).value||'',port:(document.getElementById('sh_port')||{}).value||'22',user:(document.getElementById('sh_user')||{}).value||'',auth:window._auth||'chave',key_text:KEYTEXT,senha:(document.getElementById('sh_pass')||{}).value||''};
  fetch('/conectar?key='+KEY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json();}).then(function(d){
   btn.disabled=false;btn.textContent='Conectar e inspecionar';var st=document.getElementById('connst');
-  if(d.ok){st.innerHTML="<span style='color:#3ad6b0'>✓ "+d.msg+"</span>";document.getElementById('sshform').classList.add('hide');estadoSSH();carregarServidor();}
+  if(d.ok){st.innerHTML="<span style='color:#3ad6b0'>✓ "+d.msg+" — atualizando lista…</span>";setTimeout(function(){location.reload();},700);}
   else{st.innerHTML="<span style='color:#ff9b9b'>✗ "+d.msg+"</span>";}
  }).catch(function(){btn.disabled=false;btn.textContent='Conectar e inspecionar';});}
-(function(){var f=document.getElementById('sh_key');if(!f)return;f.addEventListener('change',function(){var x=f.files&&f.files[0];if(!x)return;var r=new FileReader();r.onload=function(){KEYTEXT=String(r.result);var l=document.getElementById('sh_keyname');if(l)l.textContent='🔑 '+x.name;};r.readAsText(x);});})();
+(function(){var f=document.getElementById('sh_key'),z=document.getElementById('keyzone'),t=document.getElementById('keyzonetxt');
+ function setk(x){if(!x)return;var r=new FileReader();r.onload=function(){KEYTEXT=String(r.result);if(t)t.textContent='🔑 '+x.name;};r.readAsText(x);}
+ if(f)f.addEventListener('change',function(){setk(f.files&&f.files[0]);});
+ if(z){['dragover','dragenter'].forEach(function(ev){z.addEventListener(ev,function(e){e.preventDefault();z.classList.add('over');});});
+ ['dragleave','drop'].forEach(function(ev){z.addEventListener(ev,function(e){e.preventDefault();z.classList.remove('over');});});
+ z.addEventListener('drop',function(e){if(e.dataTransfer&&e.dataTransfer.files.length){setk(e.dataTransfer.files[0]);}});}})();
 estadoSSH();
 function marcarTodos(v){[].slice.call(document.querySelectorAll('#pick input:not([disabled])')).forEach(function(x){x.checked=!!v;});}
 function sel(){return [].slice.call(document.querySelectorAll('#pick input:checked')).map(function(x){return x.value;});}
 function removerTudo(){document.getElementById('modal').classList.add('show');}
 function fecharModal(){document.getElementById('modal').classList.remove('show');}
 function confirmarRemover(){fecharModal();MODO='desinstalar';document.getElementById('rhead-txt').textContent='Removendo tudo…';start();}
-function start(){if(CONECTADO){alert('Você está conectado por SSH a outro servidor. A instalação remota é o próximo passo (P2) — por enquanto só a inspeção. Desconecte pra instalar neste servidor.');return;}var go=document.getElementById('go');go.disabled=true;
+function start(){var go=document.getElementById('go');go.disabled=true;
  document.getElementById('pick').classList.add('hide');document.getElementById('uni').classList.add('hide');document.getElementById('run').classList.remove('hide');var _sv=document.getElementById('servidor');if(_sv)_sv.classList.add('hide');var _ra=document.getElementById('rhactions');if(_ra)_ra.classList.add('hide');var _rb=document.getElementById('removerbtn');if(_rb)_rb.style.display='none';
- document.getElementById('rhead-txt').textContent=MODO=='instalar'?'Instalando…':'Removendo…';
+ var _alvo=(CONECTADO&&window.SSHWHO)?(' em '+window.SSHWHO):'';document.getElementById('rhead-txt').textContent=(MODO=='instalar'?'Instalando':'Removendo')+_alvo+'…';
  var payload={modo:MODO,componentes:sel(),origem:ORIGEM,token:(document.getElementById('tok')||{}).value||'',repo:(document.getElementById('repo')||{}).value||'',provedor:(document.getElementById('prov')||{}).value||'VPS',dominio:(document.getElementById('dom')||{}).value||''};
  if(MODO=='instalar'&&ORIGEM=='arquivo'){var fi=document.getElementById('arq');var f=(fi&&fi.files&&fi.files[0])||window._dropFile;
    if(!f){alert('Selecione o arquivo do codigo (.zip ou .tar.gz)');go.disabled=false;document.getElementById('run').classList.add('hide');document.getElementById('pick').classList.remove('hide');return;}
@@ -1268,9 +1452,14 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(b'{"ok":true}')
-            threading.Thread(target=orquestrar,
-                             args=(data.get("componentes", []), data.get("modo", "instalar"), data),
-                             daemon=True).start()
+            _selec = data.get("componentes", [])
+            _modo = data.get("modo", "instalar")
+            if SSH.get("client"):
+                threading.Thread(target=instalar_remoto,
+                                 args=(_selec, _modo, data), daemon=True).start()
+            else:
+                threading.Thread(target=orquestrar,
+                                 args=(_selec, _modo, data), daemon=True).start()
         elif urlparse(self.path).path == "/conectar":
             n = int(self.headers.get("Content-Length", 0))
             d = json.loads(self.rfile.read(n) or "{}")
@@ -1292,7 +1481,30 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
 
 
+def cli_main():
+    """Modo headless (rodando no alvo via SSH): le VPS_CLI_CFG (json em base64),
+    executa orquestrar() e ecoa cada evento como '__EV__{json}' no stdout."""
+    global CLI
+    CLI = True
+    import base64 as _b64
+    raw = os.environ.get("VPS_CLI_CFG", "")
+    try:
+        payload = json.loads(_b64.b64decode(raw).decode()) if raw else {}
+    except Exception as e:
+        print("__EV__" + json.dumps({"tipo": "fim", "fase": "erro"}), flush=True)
+        print(f"CLI: config invalida: {e}", flush=True)
+        sys.exit(2)
+    selec = payload.get("selec", [])
+    modo = payload.get("modo", "instalar")
+    cfg = payload.get("cfg", {})
+    orquestrar(selec, modo, cfg)
+    sys.exit(0 if ESTADO.get("fase") == "ok" else 1)
+
+
 def main():
+    if "--cli" in sys.argv:
+        cli_main()
+        return
     modo = "desinstalar" if "--uninstall" in sys.argv else "instalar"
     ESTADO["modo"] = modo
     srv = ThreadingHTTPServer(("0.0.0.0", PORTA), H)
