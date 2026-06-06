@@ -291,7 +291,7 @@ def cmd_dominio(dom: str, porta_s: str) -> None:
             f"    location / {{\n        proxy_pass http://127.0.0.1:{porta};\n"
             "        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n"
             "        proxy_set_header Connection \"upgrade\";\n        proxy_set_header Host $host;\n"
-            "        proxy_set_header X-Real-IP $remote_addr;\n        proxy_read_timeout 86400;\n    }}\n}}\n")
+            "        proxy_set_header X-Real-IP $remote_addr;\n        proxy_read_timeout 86400;\n    }\n}\n")
     backup = av.read_text() if av.exists() else None
     av.write_text(conf)
     run(["ln", "-sf", str(av), str(en)])

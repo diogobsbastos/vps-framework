@@ -122,7 +122,7 @@ def _detectar_ip_pub():
     except Exception:
         return "SEU-IP"
 IP_PUB = _detectar_ip_pub()
-VERSAO = "v0.13.16"
+VERSAO = "v0.13.17"
 try:
     import datetime as _dt
     try:
@@ -967,7 +967,7 @@ def instalar_remoto(selec, modo, cfg=None):
 
     # plano local ANTES de tudo (pro front montar a lista via snapshot do /progress)
     _plano = _montar_plano(selec, modo)
-    if modo == "instalar":
+    if modo == "instalar" and not (cfg or {}).get("forcar"):
         _plano = _filtrar_instalados(_plano, log=False)
     with LOCK:
         ESTADO["fase"] = "rodando"
@@ -1085,7 +1085,7 @@ def orquestrar(selec: list, modo: str, cfg: dict = None):
         emit({"tipo": "fim", "fase": "ok"})
         return
     plano = _montar_plano(selec, modo)
-    if modo == "instalar":
+    if modo == "instalar" and not (cfg or {}).get("forcar"):
         plano = _filtrar_instalados(plano)
 
     with LOCK:
@@ -1418,6 +1418,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
   </div>
   <div class=footbar>
     <div class=prog><div class=prow><span id=sl>Pronto para instalar</span><span id=pct>0%</span></div><div class=track><div id=bar></div></div></div>
+    <label style="font-size:11.5px;color:#8fb0a8;display:flex;align-items:center;gap:5px;white-space:nowrap" title="Reinstala/atualiza tambem os componentes que ja estao instalados (por padrao eles sao pulados)."><input type=checkbox id=forcar style="width:14px;height:14px;accent-color:#2bbd9e"> atualizar já instalados</label>
     <button class=go id=go onclick=start()>Instalar</button>
   </div>
 </div>
@@ -1491,7 +1492,7 @@ function confirmarRemover(){fecharModal();MODO='desinstalar';document.getElement
 function start(){var go=document.getElementById('go');go.disabled=true;LOGBUF='';
  document.getElementById('pick').classList.add('hide');document.getElementById('uni').classList.add('hide');document.getElementById('run').classList.remove('hide');var _sv=document.getElementById('servidor');if(_sv)_sv.classList.add('hide');var _ra=document.getElementById('rhactions');if(_ra)_ra.classList.add('hide');var _rb=document.getElementById('removerbtn');if(_rb)_rb.style.display='none';
  var _alvo=(CONECTADO&&window.SSHWHO)?(' em '+window.SSHWHO):'';document.getElementById('rhead-txt').textContent=(MODO=='instalar'?'Instalando':'Removendo')+_alvo+'…';
- var payload={modo:MODO,componentes:sel(),origem:ORIGEM,token:(document.getElementById('tok')||{}).value||'',repo:(document.getElementById('repo')||{}).value||'',provedor:(document.getElementById('prov')||{}).value||'VPS',dominio:(document.getElementById('dom')||{}).value||''};
+ var payload={modo:MODO,componentes:sel(),origem:ORIGEM,token:(document.getElementById('tok')||{}).value||'',repo:(document.getElementById('repo')||{}).value||'',provedor:(document.getElementById('prov')||{}).value||'VPS',dominio:(document.getElementById('dom')||{}).value||'',forcar:(document.getElementById('forcar')||{}).checked||false};
  if(MODO=='instalar'&&ORIGEM=='arquivo'){var fi=document.getElementById('arq');var f=(fi&&fi.files&&fi.files[0])||window._dropFile;
    if(!f){alert('Selecione o arquivo do codigo (.zip ou .tar.gz)');go.disabled=false;document.getElementById('run').classList.add('hide');document.getElementById('pick').classList.remove('hide');return;}
    document.getElementById('sl').textContent='Lendo arquivo '+f.name+'...';
