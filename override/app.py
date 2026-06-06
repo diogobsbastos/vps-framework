@@ -152,6 +152,8 @@ def url_acesso(nome: str) -> str:
     """URL de acesso do app (subpasta do domínio-mãe OU domínio próprio)."""
     if nome == "evolution":
         return evolution_dashboard_url()
+    if nome == "ntfy" and DOMINIO:
+        return f"https://ntfy.{DOMINIO}"
     if nome in URLS_EXTERNAS:
         return URLS_EXTERNAS[nome]
     if nome in ROTAS_APPS:

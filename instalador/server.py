@@ -122,7 +122,7 @@ def _detectar_ip_pub():
     except Exception:
         return "SEU-IP"
 IP_PUB = _detectar_ip_pub()
-VERSAO = "v0.13.18"
+VERSAO = "v0.13.19"
 try:
     import datetime as _dt
     try:
@@ -438,6 +438,9 @@ def p_ntfy():
        'tar -C /tmp -xzf /tmp/ntfy.tgz; cp /tmp/ntfy_*/ntfy /usr/local/bin/ntfy; chmod +x /usr/local/bin/ntfy')
     sh("mkdir -p /etc/ntfy /var/cache/ntfy")
     sh("printf 'base-url: http://127.0.0.1:2586\\nlisten-http: \":2586\"\\ncache-file: /var/cache/ntfy/cache.db\\n' > /etc/ntfy/server.yml")
+    _ndom = CONFIG.get("dominio", "").strip()
+    if _ndom:
+        sh(f"sed -i 's#base-url:.*#base-url: https://ntfy.{_ndom}#' /etc/ntfy/server.yml")
     unit = """[Unit]
 Description=ntfy (push proprio)
 After=network.target
@@ -473,6 +476,9 @@ def p_evolution():
            "CACHE_REDIS_ENABLED=false\nCACHE_LOCAL_ENABLED=true\n")
     sh(como_user(f"cat > {HOME}/evolution-api/.env <<'ENV'\n{env}ENV"))
     # compila TS -> dist/ (sem isso o "node dist/main" nao existe e o servico crasha) + migrations
+    _edom = CONFIG.get("dominio", "").strip()
+    if _edom:
+        sh(como_user(f"grep -q '^SERVER_URL=' {HOME}/evolution-api/.env || echo 'SERVER_URL=https://zap.{_edom}' >> {HOME}/evolution-api/.env"))
     # gera o @prisma/client ANTES de compilar
     sh(como_user(f"cd {HOME}/evolution-api && (npm run db:generate || npx --yes prisma generate || true)"))
     # compila -> dist/. O 'npm run build' e 'tsc --noEmit && tsup'; se o tsc falhar, roda o tsup direto
@@ -580,6 +586,10 @@ def p_https():
     sh(f"cat > /etc/nginx/sites-available/apps <<'NG'\n{conf}NG")
     sh("nginx -t && systemctl reload nginx")
     sh(f"certbot --nginx -d {dom} --redirect --agree-tos --register-unsafely-without-email -n || echo 'certbot falhou (DNS aponta pro IP? porta 80 aberta?) — segue em HTTP'")
+    # subdominios proprios pros apps que precisam de raiz (Evolution e ntfy) — igual ao VPS base
+    sh(f"test -x /usr/local/bin/vps_provision && /usr/local/bin/vps_provision dominio zap.{dom} 8080 || true")
+    sh(f"test -x /usr/local/bin/vps_provision && /usr/local/bin/vps_provision dominio ntfy.{dom} 2586 || true")
+    emit({"tipo": "log", "msg": f"Subdominios: Evolution em https://zap.{dom}/manager  ·  ntfy em https://ntfy.{dom}"})
     if tok:
         emit({"tipo": "log", "msg": f"Rota MCP exposta. Conector p/ o Claude: https://{dom}/mcp-{tok}/mcp"})
     emit({"tipo": "log", "msg": f"HTTPS: se o certbot passou, painel em https://{dom}/admin/"})
