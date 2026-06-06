@@ -122,7 +122,7 @@ def _detectar_ip_pub():
     except Exception:
         return "SEU-IP"
 IP_PUB = _detectar_ip_pub()
-VERSAO = "v0.13.14"
+VERSAO = "v0.13.16"
 try:
     import datetime as _dt
     try:
@@ -473,8 +473,12 @@ def p_evolution():
            "CACHE_REDIS_ENABLED=false\nCACHE_LOCAL_ENABLED=true\n")
     sh(como_user(f"cat > {HOME}/evolution-api/.env <<'ENV'\n{env}ENV"))
     # compila TS -> dist/ (sem isso o "node dist/main" nao existe e o servico crasha) + migrations
-    sh(como_user(f"cd {HOME}/evolution-api && npm run build"))
-    sh(como_user(f"cd {HOME}/evolution-api && (npm run db:generate || true) && (npm run db:deploy || true)"))
+    # gera o @prisma/client ANTES de compilar
+    sh(como_user(f"cd {HOME}/evolution-api && (npm run db:generate || npx --yes prisma generate || true)"))
+    # compila -> dist/. O 'npm run build' e 'tsc --noEmit && tsup'; se o tsc falhar, roda o tsup direto
+    sh(como_user(f"cd {HOME}/evolution-api && (npm run build || ./node_modules/.bin/tsup || npx --yes tsup)"))
+    # aplica as migrations no banco
+    sh(como_user(f"cd {HOME}/evolution-api && (npm run db:deploy || true)"))
     unit = f"""[Unit]
 Description=Evolution API (Zap Push)
 After=network.target postgresql.service
@@ -1235,6 +1239,14 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .right{flex:1;min-width:0;display:flex;flex-direction:column;background:rgba(8,18,16,.6);backdrop-filter:blur(11px);border:1px solid rgba(43,189,158,.2);border-radius:16px;overflow:hidden}
 .rhead{padding:13px 22px 11px;font-size:11.5px;text-transform:uppercase;letter-spacing:1.3px;color:#7fb8ac;border-bottom:1px solid rgba(255,255,255,.07);display:flex;justify-content:space-between;align-items:center}
 .rhactions button{background:rgba(43,189,158,.1);color:#7fb8ac;border:1px solid rgba(43,189,158,.3);border-radius:6px;cursor:pointer;font-size:10.5px;letter-spacing:.5px;padding:4px 9px;margin-left:6px}
+.rhlog{background:rgba(43,189,158,.1);color:#7fb8ac;border:1px solid rgba(43,189,158,.3);border-radius:6px;cursor:pointer;font-size:10.5px;letter-spacing:.5px;padding:4px 9px;display:inline-flex;align-items:center;gap:4px}
+.rhlog:hover{background:rgba(43,189,158,.2);color:#eafff9}
+.logcard{background:#0c1f1c;border:1px solid rgba(43,189,158,.3);border-radius:14px;width:min(820px,92vw);max-height:82vh;display:flex;flex-direction:column;box-shadow:0 22px 60px rgba(0,0,0,.55)}
+.loghead{display:flex;justify-content:space-between;align-items:center;padding:13px 18px;border-bottom:1px solid rgba(255,255,255,.07);font-size:13px;color:#bfe0d7}
+.loghead button{background:transparent;border:none;color:#9fb0a8;font-size:16px;cursor:pointer}
+.logpre{flex:1;overflow:auto;margin:0;padding:14px 18px;font-family:ui-monospace,monospace;font-size:11.5px;color:#9fb8b1;white-space:pre-wrap;line-height:1.5}
+.logfoot{padding:11px 18px;border-top:1px solid rgba(255,255,255,.07);text-align:right}
+.logfoot button{background:rgba(43,189,158,.12);color:#eafff9;border:1px solid rgba(43,189,158,.35);border-radius:8px;padding:7px 14px;font-size:12px;cursor:pointer}
 .rhactions button:hover{background:rgba(43,189,158,.2);color:#eafff9}
 .rbody{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;padding:14px 22px}
 #pick{flex:1;overflow-y:auto;overflow-x:hidden;min-height:0}
@@ -1395,7 +1407,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
     </div>
   </div>
   <div class=right>
-    <div class=rhead><span id=rhead-txt>Componentes a instalar</span><span class=rhactions id=rhactions><button type=button onclick="marcarTodos(1)">MARCAR TODOS</button><button type=button onclick="marcarTodos(0)">LIMPAR</button></span></div>
+    <div class=rhead><span id=rhead-txt>Componentes a instalar</span><span style="display:flex;align-items:center;gap:6px"><button type=button class=rhlog onclick="verLog()"><i class="ti ti-file-text"></i> ver log</button><span class=rhactions id=rhactions><button type=button onclick="marcarTodos(1)">MARCAR TODOS</button><button type=button onclick="marcarTodos(0)">LIMPAR</button></span></span></div>
     <div class=rbody>
       <div id=servidor class=srvcard><div class=srvload>🔍 Lendo o servidor…</div></div>
       <div id=pick>__CHECKBOXES__</div>
@@ -1409,6 +1421,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
     <button class=go id=go onclick=start()>Instalar</button>
   </div>
 </div>
+<div id=logmodal class=modal><div class=logcard><div class=loghead><span><i class="ti ti-terminal-2"></i> Log da instalacao</span><button onclick="fecharLog()" aria-label="fechar">&#10005;</button></div><pre id=logfull class=logpre></pre><div class=logfoot><button onclick="copiarLog()" id=logcopybtn>copiar log</button></div></div></div>
 <div id=modal class=modal>
   <div class=modalcard>
     <div class=modalicon><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#ef6b6b" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 4 1.9 18.4a2 2 0 0 0 1.7 3h16.8a2 2 0 0 0 1.7-3L13.7 4a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9.5" x2="12" y2="13.5"/><circle cx="12" cy="17.2" r="0.7" fill="#ef6b6b" stroke="none"/></svg></div>
@@ -1422,7 +1435,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
   </div>
 </div>
 <script>
-var KEY=new URLSearchParams(location.search).get("key")||"";var IP="__IP__";var MODO="instalar";var INSTALADO=__INSTALADO__;var ORIGEM="local";
+var KEY=new URLSearchParams(location.search).get("key")||"";var IP="__IP__";var MODO="instalar";var INSTALADO=__INSTALADO__;var ORIGEM="local";var LOGBUF="";
 function modo(m){MODO=m;
  document.getElementById('cfg').classList.toggle('hide',m=='desinstalar');
  document.getElementById('pick').classList.toggle('hide',m=='desinstalar');
@@ -1471,8 +1484,11 @@ function marcarTodos(v){[].slice.call(document.querySelectorAll('#pick input:not
 function sel(){return [].slice.call(document.querySelectorAll('#pick input:checked')).map(function(x){return x.value;});}
 function removerTudo(){document.getElementById('modal').classList.add('show');}
 function fecharModal(){document.getElementById('modal').classList.remove('show');}
+function verLog(){var el=document.getElementById('logfull');if(el)el.textContent=LOGBUF||'(sem log ainda - rode uma instalacao)';document.getElementById('logmodal').classList.add('show');}
+function fecharLog(){document.getElementById('logmodal').classList.remove('show');}
+function copiarLog(){if(navigator.clipboard){navigator.clipboard.writeText(LOGBUF);}var b=document.getElementById('logcopybtn');if(b)b.textContent='copiado!';}
 function confirmarRemover(){fecharModal();MODO='desinstalar';document.getElementById('rhead-txt').textContent='Removendo tudo…';start();}
-function start(){var go=document.getElementById('go');go.disabled=true;
+function start(){var go=document.getElementById('go');go.disabled=true;LOGBUF='';
  document.getElementById('pick').classList.add('hide');document.getElementById('uni').classList.add('hide');document.getElementById('run').classList.remove('hide');var _sv=document.getElementById('servidor');if(_sv)_sv.classList.add('hide');var _ra=document.getElementById('rhactions');if(_ra)_ra.classList.add('hide');var _rb=document.getElementById('removerbtn');if(_rb)_rb.style.display='none';
  var _alvo=(CONECTADO&&window.SSHWHO)?(' em '+window.SSHWHO):'';document.getElementById('rhead-txt').textContent=(MODO=='instalar'?'Instalando':'Removendo')+_alvo+'…';
  var payload={modo:MODO,componentes:sel(),origem:ORIGEM,token:(document.getElementById('tok')||{}).value||'',repo:(document.getElementById('repo')||{}).value||'',provedor:(document.getElementById('prov')||{}).value||'VPS',dominio:(document.getElementById('dom')||{}).value||''};
@@ -1489,7 +1505,7 @@ function enviar(payload){
    if(d.tipo=='passo'){var el=document.getElementById('st-'+d.id);if(el){el.className='st '+(d.status=='ok'?'ok':d.status=='rodando'?'run':d.status=='erro'?'erro':'');
      el.querySelector('.ic').className='ic ti '+(d.status=='ok'?'ti-circle-check':d.status=='rodando'?'ti-loader-2':d.status=='erro'?'ti-alert-circle':'ti-circle');}}
    if(d.pct!=null){document.getElementById('bar').style.width=d.pct+'%';document.getElementById('pct').textContent=d.pct+'%';}
-   if(d.tipo=='log'){var L=document.getElementById('log');L.textContent+=d.msg+'\\n';L.scrollTop=L.scrollHeight;document.getElementById('sl').textContent=d.msg.slice(0,54);}
+   if(d.tipo=='log'){LOGBUF+=d.msg+String.fromCharCode(10);var L=document.getElementById('log');L.textContent+=d.msg+'\\n';L.scrollTop=L.scrollHeight;document.getElementById('sl').textContent=d.msg.slice(0,54);}
    if(d.tipo=='fim'){es.close();var go=document.getElementById('go');go.disabled=false;
      if(d.fase=='ok'&&MODO=='desinstalar'){
        document.getElementById('sl').textContent='Remoção concluída — VM limpa';document.getElementById('rhead-txt').textContent='VM zerada ✓';
