@@ -115,7 +115,7 @@ def _detectar_ip_pub():
     except Exception:
         return "SEU-IP"
 IP_PUB = _detectar_ip_pub()
-VERSAO = "v0.10.1"
+VERSAO = "v0.11.1"
 try:
     import datetime as _dt
     try:
@@ -959,6 +959,15 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .otab.on{border-color:#2bbd9e;color:#eafff9;background:rgba(43,189,158,.08)}
 .gconn{width:100%;padding:9px;border:1px solid #2bbd9e;border-radius:8px;background:rgba(43,189,158,.13);color:#eafff9;font-size:13px;cursor:pointer;font-weight:600}
 .gconn:hover{background:rgba(43,189,158,.22)}.gconn:disabled{opacity:.55;cursor:default}
+.sshpanel{border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:11px 13px;background:rgba(8,18,16,.4)}
+.sshrow{font-size:12.5px;color:#dfeae6;display:flex;align-items:center;gap:8px;font-weight:600}
+.sshdot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none}
+.sshdot.on{background:#2bbd9e;box-shadow:0 0 7px #2bbd9e}.sshdot.off{background:#52706a}
+.sshwho{font-family:ui-monospace,monospace;font-size:13px;color:#3ad6b0;margin-top:5px}
+.sshmuted{font-size:11.5px;color:#7fb8ac;margin-top:4px}
+.sshbtns{display:flex;gap:8px;margin-top:10px}
+.sshbtns button{flex:1;padding:7px;border:1px solid #2bbd9e;border-radius:7px;background:rgba(43,189,158,.12);color:#eafff9;font-size:12px;cursor:pointer}
+.sshbtns button.ghost{border-color:rgba(239,107,107,.45);background:rgba(239,107,107,.08);color:#ff9b9b}
 .dropzone{border:1.5px dashed rgba(43,189,158,.4);border-radius:11px;padding:20px;text-align:center;cursor:pointer;background:rgba(43,189,158,.04);transition:.18s}
 .dropzone:hover,.dropzone.over{border-color:#2bbd9e;background:rgba(43,189,158,.13)}
 .dzicon{font-size:26px;margin-bottom:6px}
@@ -997,7 +1006,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
     <div class=emblem><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#3ad6b0" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="4" width="18" height="6.2" rx="1.6"/><rect x="3" y="13.8" width="18" height="6.2" rx="1.6"/><circle cx="6.6" cy="7.1" r="1" fill="#3ad6b0" stroke="none"/><circle cx="6.6" cy="16.9" r="1" fill="#3ad6b0" stroke="none"/><line x1="10" y1="7.1" x2="17.5" y2="7.1"/><line x1="10" y1="16.9" x2="17.5" y2="16.9"/></svg></div>
     <h1>VPS ADMIN</h1>
     <div class=tag>Sua central de servidor · completa e pré-moldada</div>
-    <div class=origemtabs style="margin-top:18px"><button type=button class="otab on" id=alvo-local onclick="alvo('local')">🖥 Este servidor</button><button type=button class=otab id=alvo-ssh onclick="alvo('ssh')">🌐 Outro servidor</button></div>
+    <div id=sshpanel class=sshpanel style="margin-top:18px"><div class=srvload>verificando conexão…</div></div>
     <div id=sshform class=hide style="margin-top:12px;border:1px solid rgba(43,189,158,.2);border-radius:10px;padding:12px 13px;background:rgba(43,189,158,.04)">
       <label class=fld><span>Host / IP do servidor</span><input id=sh_host type=text placeholder="ex: 203.0.113.10"></label>
       <div style="display:flex;gap:8px">
@@ -1015,6 +1024,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
       </div>
       <button id=btnconn class=gconn onclick="conectar()" style="margin-top:11px">Conectar e inspecionar</button>
       <div id=connst style="font-size:12px;margin-top:8px"></div>
+      <div style="text-align:center;margin-top:7px"><span onclick="cancelarConn()" style="font-size:11.5px;color:#7fb8ac;cursor:pointer">cancelar</span></div>
     </div>
     <div id=cfg style="margin-top:22px">
       <div class=origemtabs><button type=button class="otab on" id=otab-git onclick="origem('git')">⬇️ Do Git</button><button type=button class=otab id=otab-arq onclick="origem('arquivo')">📁 De arquivo</button></div>
@@ -1075,13 +1085,18 @@ function modo(m){MODO=m;
  document.getElementById('rhead-txt').textContent=m=='instalar'?'Componentes a instalar':'Remover tudo desta VM';
  var g=document.getElementById('go');g.textContent=m=='instalar'?'Instalar':'Remover tudo';g.className=m=='instalar'?'go':'go uni';}
 function origem(m){ORIGEM=m;document.getElementById("otab-git").classList.toggle("on",m=="git");document.getElementById("otab-arq").classList.toggle("on",m=="arquivo");document.getElementById("org-git").classList.toggle("hide",m=="arquivo");document.getElementById("org-arq").classList.toggle("hide",m=="git");}
-var ALVO='local';var KEYTEXT='';window._auth='chave';
-function alvo(m){ALVO=m;
- document.getElementById('alvo-local').classList.toggle('on',m=='local');
- document.getElementById('alvo-ssh').classList.toggle('on',m=='ssh');
- document.getElementById('sshform').classList.toggle('hide',m=='local');
- if(m=='local'){fetch('/desconectar?key='+KEY,{method:'POST'});carregarServidor();}
- else{var b=document.getElementById('servidor');if(b)b.innerHTML="<div class=srvload>🌐 Conecte-se a um servidor por SSH para inspecioná-lo.</div>";}}
+var KEYTEXT='';window._auth='chave';var CONECTADO=false;
+function estadoSSH(){fetch('/ssh_estado?key='+KEY).then(function(r){return r.json();}).then(renderSSH).catch(function(){});}
+function renderSSH(d){CONECTADO=!!(d&&d.conectado);var box=document.getElementById('sshpanel');if(!box)return;
+ if(CONECTADO){box.innerHTML="<div class=sshrow><span class='sshdot on'></span> Conectado via SSH</div>"+
+   "<div class=sshwho>"+d.user+"@"+d.host+"</div>"+
+   "<div class=sshbtns><button type=button onclick=abrirConn()>Trocar servidor</button><button type=button class=ghost onclick=desconectar()>Voltar a este servidor</button></div>";}
+ else{box.innerHTML="<div class=sshrow><span class='sshdot on'></span> Conectado a <b>este servidor</b> (local)</div>"+
+   "<div class=sshmuted>Você está operando direto na máquina onde o instalador roda.</div>"+
+   "<button type=button class=gconn onclick=abrirConn() style='margin-top:9px'>🔌 Conectar a outro servidor (SSH)</button>";}}
+function abrirConn(){document.getElementById('sshform').classList.remove('hide');}
+function cancelarConn(){document.getElementById('sshform').classList.add('hide');document.getElementById('connst').innerHTML='';}
+function desconectar(){fetch('/desconectar?key='+KEY,{method:'POST'}).then(function(){estadoSSH();carregarServidor();});}
 function authm(a){window._auth=a;
  document.getElementById('auth-chave').classList.toggle('on',a=='chave');
  document.getElementById('auth-senha').classList.toggle('on',a=='senha');
@@ -1091,16 +1106,17 @@ function conectar(){var btn=document.getElementById('btnconn');btn.disabled=true
  var body={host:(document.getElementById('sh_host')||{}).value||'',port:(document.getElementById('sh_port')||{}).value||'22',user:(document.getElementById('sh_user')||{}).value||'',auth:window._auth||'chave',key_text:KEYTEXT,senha:(document.getElementById('sh_pass')||{}).value||''};
  fetch('/conectar?key='+KEY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json();}).then(function(d){
   btn.disabled=false;btn.textContent='Conectar e inspecionar';var st=document.getElementById('connst');
-  if(d.ok){st.innerHTML="<span style='color:#3ad6b0'>✓ "+d.msg+"</span>";carregarServidor();}
+  if(d.ok){st.innerHTML="<span style='color:#3ad6b0'>✓ "+d.msg+"</span>";document.getElementById('sshform').classList.add('hide');estadoSSH();carregarServidor();}
   else{st.innerHTML="<span style='color:#ff9b9b'>✗ "+d.msg+"</span>";}
  }).catch(function(){btn.disabled=false;btn.textContent='Conectar e inspecionar';});}
 (function(){var f=document.getElementById('sh_key');if(!f)return;f.addEventListener('change',function(){var x=f.files&&f.files[0];if(!x)return;var r=new FileReader();r.onload=function(){KEYTEXT=String(r.result);var l=document.getElementById('sh_keyname');if(l)l.textContent='🔑 '+x.name;};r.readAsText(x);});})();
+estadoSSH();
 function marcarTodos(v){[].slice.call(document.querySelectorAll('#pick input:not([disabled])')).forEach(function(x){x.checked=!!v;});}
 function sel(){return [].slice.call(document.querySelectorAll('#pick input:checked')).map(function(x){return x.value;});}
 function removerTudo(){document.getElementById('modal').classList.add('show');}
 function fecharModal(){document.getElementById('modal').classList.remove('show');}
 function confirmarRemover(){fecharModal();MODO='desinstalar';document.getElementById('rhead-txt').textContent='Removendo tudo…';start();}
-function start(){if(ALVO=='ssh'){alert('Modo "Outro servidor": por enquanto só a inspeção remota está pronta (P1). A instalação por SSH é o próximo passo (P2).');return;}var go=document.getElementById('go');go.disabled=true;
+function start(){if(CONECTADO){alert('Você está conectado por SSH a outro servidor. A instalação remota é o próximo passo (P2) — por enquanto só a inspeção. Desconecte pra instalar neste servidor.');return;}var go=document.getElementById('go');go.disabled=true;
  document.getElementById('pick').classList.add('hide');document.getElementById('uni').classList.add('hide');document.getElementById('run').classList.remove('hide');var _sv=document.getElementById('servidor');if(_sv)_sv.classList.add('hide');var _ra=document.getElementById('rhactions');if(_ra)_ra.classList.add('hide');var _rb=document.getElementById('removerbtn');if(_rb)_rb.style.display='none';
  document.getElementById('rhead-txt').textContent=MODO=='instalar'?'Instalando…':'Removendo…';
  var payload={modo:MODO,componentes:sel(),origem:ORIGEM,token:(document.getElementById('tok')||{}).value||'',repo:(document.getElementById('repo')||{}).value||'',provedor:(document.getElementById('prov')||{}).value||'VPS',dominio:(document.getElementById('dom')||{}).value||''};
@@ -1194,6 +1210,14 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             with LOCK:
                 self.wfile.write(json.dumps(ESTADO).encode())
+        elif path == "/ssh_estado":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(json.dumps({"conectado": bool(SSH.get("client")),
+                                         "host": SSH.get("host", ""),
+                                         "user": SSH.get("user", "")}).encode())
         elif path == "/inspecionar":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
