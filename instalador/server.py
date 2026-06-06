@@ -40,6 +40,7 @@ ESTADO = {
 }
 FILA = queue.Queue()       # eventos p/ o SSE
 LOCK = threading.Lock()
+CONFIG = {"token": "", "repo": REPO}   # preenchido pela tela (/start)
 
 # Ambiente detectado na 1a etapa (o "ping"): tudo se adapta a partir daqui
 DET = {"arch": "", "deb_arch": "", "codinome": "", "python": "", "pg_arch": ""}
@@ -137,7 +138,13 @@ def p_detectar():
 def p_sistema():
     sh("export DEBIAN_FRONTEND=noninteractive; apt-get update -y")
     sh(f"export DEBIAN_FRONTEND=noninteractive; apt-get install -y {APT_DEPS}")
-    sh(como_user(f"rm -rf {CLONE} && git clone --depth 1 {REPO} {CLONE}"))
+    repo = CONFIG.get("repo") or REPO
+    tok = (CONFIG.get("token") or "").strip()
+    url = repo
+    if tok and repo.startswith("https://github.com/"):
+        url = repo.replace("https://", f"https://x-access-token:{tok}@")
+        sh(como_user(f"printf '%s' '{tok}' > {HOME}/.github_token && chmod 600 {HOME}/.github_token"))
+    sh(como_user(f"rm -rf {CLONE} && git clone --depth 1 {url} {CLONE}"))
 
 
 def p_nginx():
@@ -412,7 +419,10 @@ PASSOS_DESINSTALAR = [
 # ============================================================
 # ORQUESTRADOR
 # ============================================================
-def orquestrar(selec: list, modo: str):
+def orquestrar(selec: list, modo: str, cfg: dict = None):
+    if cfg:
+        CONFIG["token"] = cfg.get("token", "")
+        CONFIG["repo"] = cfg.get("repo") or REPO
     if modo == "desinstalar":
         plano = [(i, l, ic, fn) for (i, l, ic, fn) in PASSOS_DESINSTALAR]
     else:
@@ -496,11 +506,20 @@ def pagina():
 .tabs{display:flex;gap:6px;margin-bottom:14px}
 .tab{flex:1;text-align:center;padding:8px;border:1px solid var(--bd);border-radius:8px;cursor:pointer;font-size:13px;color:var(--mut)}
 .tab.on{border-color:var(--ac);color:var(--tx)}
+.fld{display:block;margin-bottom:10px;font-size:13px;color:var(--mut)}
+.fld span{display:block;margin-bottom:4px}.fld small{color:#6b7280}
+.fld input{width:100%;padding:8px 10px;border:1px solid var(--bd);border-radius:8px;background:#0b0d11;color:var(--tx);font-size:13px}
 .hide{display:none}
 </style></head><body><div class=wrap><div class=card>
 <div class=hd><i class="ti ti-server-cog"></i><div><b>Instalador · VPS Framework</b><small>Ubuntu · clone do servidor (menos Ollama)</small></div></div>
 <div class=bd>
   <div class=tabs><div class="tab on" id=tab-inst onclick="modo('instalar')">Instalar</div><div class=tab id=tab-uni onclick="modo('desinstalar')">Remover tudo</div></div>
+  <div id=cfg>
+    <label class=fld><span>Repo do código (privado) — padrão já preenchido</span>
+      <input id=repo type=text value="https://github.com/diogobsbastos/vps-escola-parque-admin.git"></label>
+    <label class=fld><span>Token do GitHub <small>(p/ clonar o repo privado + ligar o deploy; fica só na VM)</small></span>
+      <input id=tok type=password placeholder="ghp_..."></label>
+  </div>
   <div id=pick>__CHECKBOXES__</div>
   <div id=run class=hide>
     <div class=steps id=steps></div>
@@ -523,9 +542,12 @@ function start(){
  var go=document.getElementById('go');go.disabled=true;
  if(MODO=='desinstalar'&&!confirm('Remover TODOS os serviços e pastas do framework?')){go.disabled=false;return;}
  document.getElementById('pick').classList.add('hide');
+ var cf=document.getElementById('cfg');if(cf)cf.classList.add('hide');
  document.getElementById('run').classList.remove('hide');
  fetch('/start?key='+KEY,{method:'POST',headers:{'Content-Type':'application/json'},
-   body:JSON.stringify({modo:MODO,componentes:sel()})});
+   body:JSON.stringify({modo:MODO,componentes:sel(),
+     token:(document.getElementById('tok')||{}).value||'',
+     repo:(document.getElementById('repo')||{}).value||''})});
  var es=new EventSource('/progress?key='+KEY);
  es.onmessage=function(e){var d=JSON.parse(e.data);
    if(d.tipo=='reset'){render(d.passos);}
@@ -613,7 +635,7 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b'{"ok":true}')
             threading.Thread(target=orquestrar,
-                             args=(data.get("componentes", []), data.get("modo", "instalar")),
+                             args=(data.get("componentes", []), data.get("modo", "instalar"), data),
                              daemon=True).start()
         else:
             self.send_response(404)
