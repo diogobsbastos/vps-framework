@@ -115,6 +115,13 @@ def _detectar_ip_pub():
     except Exception:
         return "SEU-IP"
 IP_PUB = _detectar_ip_pub()
+VERSAO = "v0.9.0"
+try:
+    import datetime as _dt
+    _BUILD = _dt.datetime.fromtimestamp(os.path.getmtime(__file__)).strftime("%d/%m %H:%M")
+except Exception:
+    _BUILD = "?"
+
 
 print(f"[instalador] token={TOKEN}  porta={PORTA}  dry={DRY}", flush=True)
 
@@ -609,6 +616,68 @@ def _framework_instalado() -> bool:
     return any(os.path.exists(m) for m in marcos)
 
 
+INSPECT_ITENS = [
+    ("Nginx", "ti-world", "svc", "nginx"),
+    ("PostgreSQL", "ti-database", "svc", "postgresql"),
+    ("PostgREST", "ti-api", "svc", "postgrest"),
+    ("Painel VPS Admin", "ti-layout-dashboard", "svc", "vpsadmin"),
+    ("Provisionador", "ti-rocket", "file", "/usr/local/bin/vps_provision"),
+    ("Webhook (deploy)", "ti-git-merge", "svc", "vpswebhook"),
+    ("VPS-MCP (Claude)", "ti-plug", "svc", "vpsmcp"),
+    ("LLM Gateway", "ti-key", "svc", "llmgateway"),
+    ("Sentinela", "ti-bell", "timer", "vpssentinela.timer"),
+    ("ntfy (push)", "ti-send", "svc", "ntfy"),
+    ("Evolution (WhatsApp)", "ti-brand-whatsapp", "svc", "evolution"),
+    ("Backend Central", "ti-engine", "svc", "backendcentral"),
+    ("Ollama (LLM local)", "ti-cpu", "svc", "ollama"),
+]
+
+
+def _status_unidade(tipo: str, alvo: str) -> str:
+    """ativo (rodando) | inativo (instalado mas parado) | ausente (nao existe)."""
+    if tipo == "file":
+        return "ativo" if os.path.exists(alvo) else "ausente"
+    unit = alvo if "." in alvo else alvo + ".service"
+    existe = subprocess.run(f"systemctl cat {unit}", shell=True,
+                            capture_output=True).returncode == 0
+    if not existe:
+        return "ausente"
+    act = subprocess.run(f"systemctl is-active {unit}", shell=True,
+                         capture_output=True, text=True).stdout.strip()
+    return "ativo" if act == "active" else "inativo"
+
+
+def inspecionar() -> dict:
+    """Raio-X do servidor onde o instalador esta rodando (sem SSH: local)."""
+    import socket
+    cfg = {}
+    try:
+        cfg = json.loads(open(f"{HOME}/.vps_config.json").read())
+    except Exception:
+        cfg = {}
+
+    def _sh(c):
+        return subprocess.run(c, shell=True, capture_output=True, text=True).stdout.strip()
+
+    itens = [{"label": lb, "icon": ic, "status": _status_unidade(tp, al)}
+             for (lb, ic, tp, al) in INSPECT_ITENS]
+    ativos = sum(1 for i in itens if i["status"] == "ativo")
+    return {
+        "instalado": _framework_instalado(),
+        "host": socket.gethostname(),
+        "ip": IP_PUB,
+        "provedor": (cfg.get("provedor") or cfg.get("provider") or "").strip(),
+        "dominio": (cfg.get("dominio") or "").strip(),
+        "arch": _sh("uname -m") or "?",
+        "os": (_sh("lsb_release -ds 2>/dev/null") or "").strip('"'),
+        "python": _sh("python3 --version"),
+        "disco": _sh("df -h / | tail -1 | awk '{print $3\" de \"$2\" (\"$5\" usado)\"}'"),
+        "ativos": ativos,
+        "total": len(itens),
+        "itens": itens,
+    }
+
+
 def orquestrar(selec: list, modo: str, cfg: dict = None):
     if cfg:
         CONFIG["token"] = cfg.get("token", "")
@@ -659,7 +728,11 @@ def orquestrar(selec: list, modo: str, cfg: dict = None):
             pw = open(f"{HOME}/.vps_admin_pass").read().strip()
         except Exception:
             pw = "(ver ~/.vps_admin_pass)"
-        emit({"tipo": "log", "msg": f"PAINEL: http://{IP_PUB}/admin/  ·  senha: {pw}"})
+        dom = CONFIG.get("dominio", "").strip()
+        painel = f"https://{dom}/admin/" if dom else f"http://{IP_PUB}/admin/"
+        emit({"tipo": "log", "msg": f"PAINEL: {painel}  ·  senha: {pw}"})
+        emit({"tipo": "fim", "fase": "ok", "senha": pw, "painel": painel})
+        return
     emit({"tipo": "fim", "fase": "ok"})
 
 
@@ -685,6 +758,7 @@ def pagina():
 <link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/3.34.0/iconfont/tabler-icons.min.css">
 <style>
 *,*::before,*::after{box-sizing:border-box}
+.ver{position:fixed;top:7px;right:13px;font-size:10.5px;color:rgba(127,184,172,.6);letter-spacing:.4px;z-index:60;user-select:none;font-family:ui-monospace,monospace}
 html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;font-family:system-ui,Segoe UI,sans-serif;scrollbar-width:thin;scrollbar-color:#2bbd9e rgba(255,255,255,.05)}
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-track{background:rgba(255,255,255,.04);border-radius:99px}
@@ -712,6 +786,17 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .rhactions button:hover{background:rgba(43,189,158,.2);color:#eafff9}
 .rbody{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;padding:14px 22px}
 #pick{flex:1;overflow-y:auto;overflow-x:hidden;min-height:0}
+.srvcard{flex:none;margin-bottom:13px;background:rgba(43,189,158,.05);border:1px solid rgba(43,189,158,.20);border-radius:11px;padding:12px 15px}
+.srvtop{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.srvttl{font-size:10.5px;letter-spacing:1.4px;color:#7fb8ac;text-transform:uppercase;font-weight:600}
+.srvtog{font-size:11px;color:#3ad6b0;cursor:pointer;user-select:none}
+.srvtog:hover{color:#eafff9}
+.srvid{font-size:13.5px;color:#eafff9;font-weight:600;line-height:1.4}
+.srvsum{font-size:12px;color:#9fb8b1;margin-top:3px}
+.srvdet{margin-top:11px;display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:7px 14px;padding-top:11px;border-top:1px solid rgba(255,255,255,.07)}
+.srvitem{font-size:12px;color:#c2d6d0;display:flex;align-items:center;gap:8px}
+.srvdot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none;box-shadow:0 0 6px currentColor}
+.srvload{font-size:12px;color:#7fb8ac}
 #run{flex:1;display:flex;flex-direction:column;min-height:0}
 .cmp{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid rgba(255,255,255,.08);border-radius:9px;margin-bottom:7px;cursor:pointer;font-size:13.5px;background:rgba(8,18,16,.45)}
 .cmp:hover{border-color:rgba(43,189,158,.4)}.cmp input{width:16px;height:16px;accent-color:#2bbd9e;flex:none}
@@ -737,7 +822,10 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .origemtabs{display:flex;gap:6px;margin-bottom:12px}
 .otab{flex:1;padding:8px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:transparent;color:#8fb0a8;font-size:12px;cursor:pointer}
 .otab.on{border-color:#2bbd9e;color:#eafff9;background:rgba(43,189,158,.08)}
-.fld input[type=file]{padding:7px;font-size:12px}
+.dropzone{border:1.5px dashed rgba(43,189,158,.4);border-radius:11px;padding:20px;text-align:center;cursor:pointer;background:rgba(43,189,158,.04);transition:.18s}
+.dropzone:hover,.dropzone.over{border-color:#2bbd9e;background:rgba(43,189,158,.13)}
+.dzicon{font-size:26px;margin-bottom:6px}
+#dztxt{font-size:12.5px;color:#bfe0d7}#dztxt small{color:#5f897e}
 .modal{position:fixed;inset:0;z-index:50;background:rgba(3,8,6,.8);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center}
 .modal.show{display:flex}
 .modalcard{background:#0d1f1c;border:1px solid rgba(224,107,107,.45);border-radius:16px;padding:26px 28px;max-width:440px;text-align:center;box-shadow:0 22px 60px rgba(0,0,0,.55)}
@@ -752,6 +840,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .mbok{flex:1;background:linear-gradient(90deg,#e06b6b,#c0392b);border:none;color:#fff;border-radius:10px;padding:11px;font-size:14px;font-weight:700;cursor:pointer}
 .hide{display:none !important}
 </style></head><body>
+<div class=ver>VPS Admin __VERSAO__ · build __BUILD__</div>
 <svg class=bg viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid slice">
  <defs>
   <radialGradient id="glow" cx="30%" cy="35%" r="62%"><stop offset="0%" stop-color="#1d5f55" stop-opacity=".5"/><stop offset="100%" stop-color="#1d5f55" stop-opacity="0"/></radialGradient>
@@ -778,8 +867,13 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
         <label class=fld><span>Token do GitHub <small>(clona o repo privado + liga o deploy; fica só na VM)</small></span><input id=tok type=password placeholder="ghp_..."></label>
       </div>
       <div id=org-arq class=hide>
-        <label class=fld><span>Arquivo do código <small>(.zip ou .tar.gz — do pendrive)</small></span><input id=arq type=file accept=".zip,.tar.gz,.tgz"></label>
-        <div style="font-size:11px;color:#5f897e;margin:-4px 0 10px">Sem Git, sem token — instala do arquivo local.</div>
+        <label class=fld><span>Arquivo do código <small>(.zip ou .tar.gz — do pendrive)</small></span></label>
+        <div id=dropzone class=dropzone onclick="document.getElementById('arq').click()">
+          <div class=dzicon>📁</div>
+          <div id=dztxt>Arraste o arquivo aqui<br><small>ou clique para escolher · .zip / .tar.gz</small></div>
+        </div>
+        <input id=arq type=file accept=".zip,.tar.gz,.tgz" style="display:none">
+        <div style="font-size:11px;color:#5f897e;margin:8px 0 10px">Sem Git, sem token — instala do arquivo local.</div>
       </div>
       <label class=fld><span>Provedor <small>(rótulo no painel)</small></span><input id=prov type=text value="GCP" placeholder="GCP / Oracle / Hetzner..."></label>
       <label class=fld><span>Domínio <small>(opcional; vazio = acesso por IP)</small></span><input id=dom type=text placeholder="meuapp.duckdns.org"></label>
@@ -792,6 +886,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
   <div class=right>
     <div class=rhead><span id=rhead-txt>Componentes a instalar</span><span class=rhactions id=rhactions><button type=button onclick="marcarTodos(1)">MARCAR TODOS</button><button type=button onclick="marcarTodos(0)">LIMPAR</button></span></div>
     <div class=rbody>
+      <div id=servidor class=srvcard><div class=srvload>🔍 Lendo o servidor…</div></div>
       <div id=pick>__CHECKBOXES__</div>
       <div id=uni class=hide><div style="border:1px solid rgba(224,107,107,.4);background:rgba(224,107,107,.08);border-radius:10px;padding:14px 16px;font-size:13px;color:#f3c0c0;line-height:1.7"><b style="color:#ff9b9b"><i class="ti ti-alert-triangle"></i> Isto remove TODO o framework desta VM</b><br>Para e apaga: painel, PostgreSQL, PostgREST, MCP, Gateway, Webhook, Sentinela, ntfy, Evolution, Backend Central, provisionador, rotas Nginx e o banco <code>evolution</code>.<br><span style="color:#9fb0a8">A VM volta <b>limpa, do zero</b>. O código no GitHub e teus backups <b>não</b> são tocados.</span></div></div>
       <div id=run class=hide><div class=steps id=steps></div><div class=log id=log></div></div>
@@ -830,10 +925,10 @@ function removerTudo(){document.getElementById('modal').classList.add('show');}
 function fecharModal(){document.getElementById('modal').classList.remove('show');}
 function confirmarRemover(){fecharModal();MODO='desinstalar';document.getElementById('rhead-txt').textContent='Removendo tudo…';start();}
 function start(){var go=document.getElementById('go');go.disabled=true;
- document.getElementById('pick').classList.add('hide');document.getElementById('uni').classList.add('hide');document.getElementById('run').classList.remove('hide');var _ra=document.getElementById('rhactions');if(_ra)_ra.classList.add('hide');var _rb=document.getElementById('removerbtn');if(_rb)_rb.style.display='none';
+ document.getElementById('pick').classList.add('hide');document.getElementById('uni').classList.add('hide');document.getElementById('run').classList.remove('hide');var _sv=document.getElementById('servidor');if(_sv)_sv.classList.add('hide');var _ra=document.getElementById('rhactions');if(_ra)_ra.classList.add('hide');var _rb=document.getElementById('removerbtn');if(_rb)_rb.style.display='none';
  document.getElementById('rhead-txt').textContent=MODO=='instalar'?'Instalando…':'Removendo…';
  var payload={modo:MODO,componentes:sel(),origem:ORIGEM,token:(document.getElementById('tok')||{}).value||'',repo:(document.getElementById('repo')||{}).value||'',provedor:(document.getElementById('prov')||{}).value||'VPS',dominio:(document.getElementById('dom')||{}).value||''};
- if(MODO=='instalar'&&ORIGEM=='arquivo'){var fi=document.getElementById('arq');var f=fi&&fi.files&&fi.files[0];
+ if(MODO=='instalar'&&ORIGEM=='arquivo'){var fi=document.getElementById('arq');var f=(fi&&fi.files&&fi.files[0])||window._dropFile;
    if(!f){alert('Selecione o arquivo do codigo (.zip ou .tar.gz)');go.disabled=false;document.getElementById('run').classList.add('hide');document.getElementById('pick').classList.remove('hide');return;}
    document.getElementById('sl').textContent='Lendo arquivo '+f.name+'...';
    var rd=new FileReader();rd.onload=function(){payload.arquivo_b64=String(rd.result).split(',')[1];payload.arquivo_nome=f.name;enviar(payload);};rd.readAsDataURL(f);return;}
@@ -851,16 +946,41 @@ function enviar(payload){
      if(d.fase=='ok'&&MODO=='desinstalar'){
        document.getElementById('sl').textContent='Remoção concluída — VM limpa';document.getElementById('rhead-txt').textContent='VM zerada ✓';
        go.textContent='↻ Recarregar p/ instalar';go.className='go';go.onclick=function(){location.reload();};INSTALADO=false;}
-     else if(d.fase=='ok'){var dom=(document.getElementById('dom')||{}).value||'';var url=dom?('https://'+dom+'/admin/'):('http://'+IP+'/admin/');
+     else if(d.fase=='ok'){var dom=(document.getElementById('dom')||{}).value||'';var url=d.painel||(dom?('https://'+dom+'/admin/'):('http://'+IP+'/admin/'));var senha=d.senha||'';
        document.getElementById('sl').textContent='Concluído — ambiente no ar';document.getElementById('rhead-txt').textContent='Instalação concluída ✓';
+       document.getElementById('run').innerHTML='<div class=successbox><div class=sok>✅ Instalação concluída!</div>'+
+         '<div class=srow>🌐 Endereço do painel</div><div class=sval><a href="'+url+'" target=_blank>'+url+'</a></div>'+
+         '<div class=srow>🔑 Senha do admin</div><div class=sval><span class=spw id=spw>'+senha+'</span> <button class=scopy id=scopybtn onclick="copiarSenha()">📋 copiar</button></div>'+
+         '<div class=shint>⚠️ Guarde esta senha — ela é gerada só uma vez. Clique em <b>Entrar no painel</b> embaixo pra abrir.</div></div>';
        go.textContent='Entrar no painel →';go.className='go done';go.onclick=function(){window.open(url,'_blank');};INSTALADO=true;}
      else{go.textContent='Erro — ver log';go.className='go uni';}}
  };}
+(function(){var dz=document.getElementById("dropzone"),arq=document.getElementById("arq"),txt=document.getElementById("dztxt");if(!dz)return;
+function show(f){if(f)txt.innerHTML="✅ "+f.name+"<br><small>clique ou arraste pra trocar</small>";}
+arq.addEventListener("change",function(){show(arq.files[0]);});
+["dragover","dragenter"].forEach(function(ev){dz.addEventListener(ev,function(e){e.preventDefault();dz.classList.add("over");});});
+["dragleave","drop"].forEach(function(ev){dz.addEventListener(ev,function(e){e.preventDefault();dz.classList.remove("over");});});
+dz.addEventListener("drop",function(e){if(e.dataTransfer&&e.dataTransfer.files.length){try{arq.files=e.dataTransfer.files;}catch(_){}show(e.dataTransfer.files[0]);window._dropFile=e.dataTransfer.files[0];}});
+})();
+function copiarSenha(){var el=document.getElementById('spw');if(!el)return;var t=el.textContent;if(navigator.clipboard){navigator.clipboard.writeText(t);}var b=document.getElementById('scopybtn');if(b){b.textContent='✅ copiado';}}
 function _syncRemover(){var rb=document.getElementById('removerbtn'),hp=document.querySelector('.help');var v=INSTALADO?'':'none';if(rb)rb.style.display=v;if(hp)hp.style.display=v;}
+function corStatus(st){return st=="ativo"?"#2bbd9e":st=="inativo"?"#ef6b6b":"#52706a";}
+function toggleSrv(){var d=document.getElementById("srvdet"),t=document.getElementById("srvtog");if(!d)return;var h=d.classList.toggle("hide");if(t)t.textContent=h?"ver tudo ▾":"ocultar ▴";}
+function carregarServidor(){fetch("/inspecionar?key="+KEY).then(function(r){return r.json();}).then(function(d){
+ var box=document.getElementById("servidor");if(!box)return;if(d.erro){box.innerHTML="";return;}
+ var dots=d.itens.map(function(i){var c=corStatus(i.status);return "<span class=srvitem><span class=srvdot style='color:"+c+";background:"+c+"'></span>"+i.label+"</span>";}).join("");
+ var idln="🖥 "+d.host+(d.provedor?" · "+d.provedor:"")+" · "+d.arch+(d.os?" · "+d.os:"");
+ var resumo=d.instalado?("<b style='color:#2bbd9e'>"+d.ativos+"/"+d.total+"</b> serviços ativos"):("<b style='color:#e0b057'>VM limpa</b> — nada instalado ainda");
+ box.innerHTML="<div class=srvtop><span class=srvttl>ESTE SERVIDOR</span><span class=srvtog id=srvtog onclick=toggleSrv()>ver tudo ▾</span></div>"+
+   "<div class=srvid>"+idln+"</div>"+
+   "<div class=srvsum>"+resumo+(d.ip?" · <span style='color:#7fb8ac'>IP "+d.ip+"</span>":"")+(d.disco?" · disco "+d.disco:"")+"</div>"+
+   "<div id=srvdet class='srvdet hide'>"+dots+"</div>";
+}).catch(function(){var box=document.getElementById("servidor");if(box)box.innerHTML="";});}
+carregarServidor();
 _syncRemover();
 function render(passos){var c=document.getElementById('steps');if(c.dataset.done)return;c.dataset.done=1;
  c.innerHTML=passos.map(function(p){return '<div class="st" id="st-'+p.id+'"><i class="ti '+p.icon+'"></i><span>'+p.label+'</span><i class="ic ti ti-circle"></i></div>';}).join('');}
-</script></body></html>""".replace("__CHECKBOXES__", checkboxes_html()).replace("__IP__", IP_PUB).replace("__INSTALADO__", "true" if _framework_instalado() else "false")
+</script></body></html>""".replace("__CHECKBOXES__", checkboxes_html()).replace("__IP__", IP_PUB).replace("__INSTALADO__", "true" if _framework_instalado() else "false").replace("__VERSAO__", VERSAO).replace("__BUILD__", _BUILD)
 
 
 # ============================================================
@@ -898,6 +1018,15 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             with LOCK:
                 self.wfile.write(json.dumps(ESTADO).encode())
+        elif path == "/inspecionar":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            try:
+                self.wfile.write(json.dumps(inspecionar()).encode())
+            except Exception as e:
+                self.wfile.write(json.dumps({"erro": str(e)}).encode())
         elif path == "/progress":
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")

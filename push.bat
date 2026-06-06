@@ -1,6 +1,7 @@
 @echo off
 chcp 65001 >nul
 cd /d "%~dp0"
+if exist ".git\index.lock" ( del /f /q ".git\index.lock" & echo [auto] lock travado do git removido )
 echo ============================================
 echo   PUSH do VPS Framework  (envia pro GitHub)
 echo ============================================
