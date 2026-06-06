@@ -650,8 +650,22 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .track #bar{height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,#2bbd9e,#3ad6b0);box-shadow:0 0 12px rgba(43,189,158,.5);transition:width .45s}
 .go{flex:none;background:linear-gradient(90deg,#2bbd9e,#16a085);color:#04130d;border:none;border-radius:10px;padding:11px 28px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:0 6px 18px rgba(43,189,158,.35)}
 .go:disabled{opacity:.5;cursor:default}.go.uni{background:linear-gradient(90deg,#e06b6b,#c0392b);color:#fff}.go.done{background:linear-gradient(90deg,#3ad6b0,#16a085)}
-.modolink{display:inline-block;margin-top:18px;font-size:12px;color:#e08c8c;cursor:pointer;text-decoration:none}
+.gouni{flex:none;background:transparent;color:#ef8b8b;border:1px solid rgba(224,107,107,.5);border-radius:10px;padding:11px 18px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
+.gouni:hover{background:rgba(224,107,107,.12);border-color:rgba(224,107,107,.8)}
+.gouni:disabled{opacity:.4;cursor:default}
 .modolink:hover{text-decoration:underline}
+.modal{position:fixed;inset:0;z-index:50;background:rgba(3,8,6,.8);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center}
+.modal.show{display:flex}
+.modalcard{background:#0d1f1c;border:1px solid rgba(224,107,107,.45);border-radius:16px;padding:26px 28px;max-width:440px;text-align:center;box-shadow:0 22px 60px rgba(0,0,0,.55)}
+.modalicon{width:54px;height:54px;margin:0 auto 12px;border-radius:50%;background:rgba(224,107,107,.15);display:flex;align-items:center;justify-content:center}
+.modalicon i{font-size:30px;color:#ef6b6b}
+.modalcard h3{margin:0 0 10px;font-size:19px;color:#fff}
+.modalcard p{font-size:13px;color:#bcd0c9;line-height:1.6;margin:0 0 9px}
+.modalsafe{color:#7fb8ac !important}
+.modalbtns{display:flex;gap:10px;margin-top:18px}
+.mbcancel{flex:1;background:transparent;border:1px solid rgba(255,255,255,.22);color:#dfeae6;border-radius:10px;padding:11px;font-size:14px;cursor:pointer}
+.mbcancel:hover{background:rgba(255,255,255,.06)}
+.mbok{flex:1;background:linear-gradient(90deg,#e06b6b,#c0392b);border:none;color:#fff;border-radius:10px;padding:11px;font-size:14px;font-weight:700;cursor:pointer}
 .hide{display:none}
 </style></head><body>
 <svg class=bg viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid slice">
@@ -679,7 +693,6 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
       <label class=fld><span>Provedor <small>(rótulo no painel)</small></span><input id=prov type=text value="GCP" placeholder="GCP / Oracle / Hetzner..."></label>
       <label class=fld><span>Domínio <small>(opcional; vazio = acesso por IP)</small></span><input id=dom type=text placeholder="meuapp.duckdns.org"></label>
     </div>
-    <a id=modolink class=modolink onclick="removerTudo()">🗑️ Remover tudo (limpar a VM)</a>
   </div>
   <div class=right>
     <div class=rhead><span id=rhead-txt>Componentes a instalar</span><span class=rhactions id=rhactions><a onclick="marcarTodos(1)">MARCAR TODOS</a> · <a onclick="marcarTodos(0)">LIMPAR</a></span></div>
@@ -691,8 +704,21 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
   </div>
   </div>
   <div class=footbar>
+    <button class=gouni id=removerbtn onclick="removerTudo()"><i class="ti ti-trash"></i> Remover tudo</button>
     <div class=prog><div class=prow><span id=sl>Pronto para instalar</span><span id=pct>0%</span></div><div class=track><div id=bar></div></div></div>
     <button class=go id=go onclick=start()>Instalar</button>
+  </div>
+</div>
+<div id=modal class=modal>
+  <div class=modalcard>
+    <div class=modalicon><i class="ti ti-alert-triangle"></i></div>
+    <h3>Remover tudo desta VM?</h3>
+    <p>Isto <b>para e apaga TODOS</b> os serviços (Postgres, painel, MCP, Gateway, Webhook, Sentinela, ntfy, Evolution, Backend Central), as rotas Nginx e o banco <code>evolution</code>. A VM volta <b>limpa, do zero</b>.</p>
+    <p class=modalsafe>✔ O código no GitHub e seus backups NÃO são tocados.</p>
+    <div class=modalbtns>
+      <button class=mbcancel onclick="fecharModal()">Cancelar</button>
+      <button class=mbok onclick="confirmarRemover()">Sim, remover tudo</button>
+    </div>
   </div>
 </div>
 <script>
@@ -707,10 +733,12 @@ function modo(m){MODO=m;
  var g=document.getElementById('go');g.textContent=m=='instalar'?'Instalar':'Remover tudo';g.className=m=='instalar'?'go':'go uni';}
 function marcarTodos(v){[].slice.call(document.querySelectorAll('#pick input:not([disabled])')).forEach(function(x){x.checked=!!v;});}
 function sel(){return [].slice.call(document.querySelectorAll('#pick input:checked')).map(function(x){return x.value;});}
-function removerTudo(){MODO='desinstalar';document.getElementById('rhead-txt').textContent='Removendo tudo…';start();}
+function removerTudo(){document.getElementById('modal').classList.add('show');}
+function fecharModal(){document.getElementById('modal').classList.remove('show');}
+function confirmarRemover(){fecharModal();MODO='desinstalar';document.getElementById('rhead-txt').textContent='Removendo tudo…';start();}
 function start(){var go=document.getElementById('go');go.disabled=true;
- if(MODO=='desinstalar'&&!confirm('Remover TODOS os serviços (Postgres, painel, MCP...), rotas Nginx e o banco evolution desta VM?\n\nA VM volta limpa. (O código no GitHub e seus backups NÃO são tocados.)')){go.disabled=false;return;}
- document.getElementById('pick').classList.add('hide');document.getElementById('uni').classList.add('hide');document.getElementById('run').classList.remove('hide');var _ra=document.getElementById('rhactions');if(_ra)_ra.classList.add('hide');
+ 
+ document.getElementById('pick').classList.add('hide');document.getElementById('uni').classList.add('hide');document.getElementById('run').classList.remove('hide');var _ra=document.getElementById('rhactions');if(_ra)_ra.classList.add('hide');var _rb=document.getElementById('removerbtn');if(_rb)_rb.style.display='none';
  document.getElementById('rhead-txt').textContent=MODO=='instalar'?'Instalando…':'Removendo…';
  fetch('/start?key='+KEY,{method:'POST',headers:{'Content-Type':'application/json'},
    body:JSON.stringify({modo:MODO,componentes:sel(),token:(document.getElementById('tok')||{}).value||'',

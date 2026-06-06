@@ -1667,7 +1667,7 @@ if pagina == "📊 Dashboard":
             with st.container(border=True):
                 st.markdown(
                     f"**{cor} {_svcs[nome]}** "
-                    f"<span style='background:{_bg};border-radius:8px;"
+                    f"<span style='background:{_bg};color:#1f2937;border-radius:8px;"
                     f"padding:1px 8px;font-size:0.68em;white-space:nowrap;"
                     f"vertical-align:middle'>{_reg}</span>",
                     unsafe_allow_html=True,
