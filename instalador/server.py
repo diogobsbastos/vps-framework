@@ -753,7 +753,7 @@ function start(){var go=document.getElementById('go');go.disabled=true;
    if(d.tipo=='passo'){var el=document.getElementById('st-'+d.id);if(el){el.className='st '+(d.status=='ok'?'ok':d.status=='rodando'?'run':d.status=='erro'?'erro':'');
      el.querySelector('.ic').className='ic ti '+(d.status=='ok'?'ti-circle-check':d.status=='rodando'?'ti-loader-2':d.status=='erro'?'ti-alert-circle':'ti-circle');}}
    if(d.pct!=null){document.getElementById('bar').style.width=d.pct+'%';document.getElementById('pct').textContent=d.pct+'%';}
-   if(d.tipo=='log'){var L=document.getElementById('log');L.textContent+=d.msg+'\n';L.scrollTop=L.scrollHeight;document.getElementById('sl').textContent=d.msg.slice(0,54);}
+   if(d.tipo=='log'){var L=document.getElementById('log');L.textContent+=d.msg+'\\n';L.scrollTop=L.scrollHeight;document.getElementById('sl').textContent=d.msg.slice(0,54);}
    if(d.tipo=='fim'){es.close();var go=document.getElementById('go');go.disabled=false;
      if(d.fase=='ok'){var dom=(document.getElementById('dom')||{}).value||'';var url=dom?('https://'+dom+'/admin/'):('http://'+IP+'/admin/');
        document.getElementById('sl').textContent='Concluído — ambiente no ar';document.getElementById('rhead-txt').textContent='Instalação concluída ✓';
