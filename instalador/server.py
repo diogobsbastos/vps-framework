@@ -646,6 +646,8 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .track #bar{height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,#2bbd9e,#3ad6b0);box-shadow:0 0 12px rgba(43,189,158,.5);transition:width .45s}
 .go{flex:none;background:linear-gradient(90deg,#2bbd9e,#16a085);color:#04130d;border:none;border-radius:10px;padding:11px 28px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:0 6px 18px rgba(43,189,158,.35)}
 .go:disabled{opacity:.5;cursor:default}.go.uni{background:linear-gradient(90deg,#e06b6b,#c0392b);color:#fff}.go.done{background:linear-gradient(90deg,#3ad6b0,#16a085)}
+.modolink{display:inline-block;margin-top:16px;font-size:12px;color:#e08c8c;cursor:pointer;text-decoration:none}
+.modolink:hover{text-decoration:underline}
 .hide{display:none}
 </style></head><body>
 <svg class=bg viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid slice">
@@ -666,38 +668,41 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
     <div class=emblem><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#3ad6b0" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="4" width="18" height="6.2" rx="1.6"/><rect x="3" y="13.8" width="18" height="6.2" rx="1.6"/><circle cx="6.6" cy="7.1" r="1" fill="#3ad6b0" stroke="none"/><circle cx="6.6" cy="16.9" r="1" fill="#3ad6b0" stroke="none"/><line x1="10" y1="7.1" x2="17.5" y2="7.1"/><line x1="10" y1="16.9" x2="17.5" y2="16.9"/></svg></div>
     <h1>VPS ADMIN</h1>
     <div class=tag>Sua central de servidor · completa e pré-moldada</div>
-    <div class=tabs><div class="tab on" id=tab-inst onclick="modo('instalar')">Instalar</div><div class=tab id=tab-uni onclick="modo('desinstalar')">Remover tudo</div></div>
-    <div id=cfg>
+    <div id=cfg style="margin-top:22px">
       <label class=fld><span>Repo do código (privado)</span><input id=repo type=text value="https://github.com/diogobsbastos/vps-escola-parque-admin.git"></label>
       <label class=fld><span>Token do GitHub <small>(clona o repo privado + liga o deploy; fica só na VM)</small></span><input id=tok type=password placeholder="ghp_..."></label>
       <label class=fld><span>Provedor <small>(rótulo no painel)</small></span><input id=prov type=text value="GCP" placeholder="GCP / Oracle / Hetzner..."></label>
       <label class=fld><span>Domínio <small>(opcional; vazio = acesso por IP)</small></span><input id=dom type=text placeholder="meuapp.duckdns.org"></label>
     </div>
+    <a id=modolink class=modolink onclick="toggleModo()">🗑️ Remover tudo (limpar a VM)</a>
   </div>
   <div class=right>
     <div class=rhead id=rhead>Componentes a instalar</div>
     <div class=rbody>
       <div id=pick>__CHECKBOXES__</div>
+      <div id=uni class=hide><div style="border:1px solid rgba(224,107,107,.4);background:rgba(224,107,107,.08);border-radius:10px;padding:14px 16px;font-size:13px;color:#f3c0c0;line-height:1.7"><b style="color:#ff9b9b"><i class="ti ti-alert-triangle"></i> Isto remove TODO o framework desta VM</b><br>Para e apaga: painel, PostgreSQL, PostgREST, MCP, Gateway, Webhook, Sentinela, ntfy, Evolution, Backend Central, provisionador, rotas Nginx e o banco <code>evolution</code>.<br><span style="color:#9fb0a8">A VM volta <b>limpa, do zero</b>. O código no GitHub e teus backups <b>não</b> são tocados.</span></div></div>
       <div id=run class=hide><div class=steps id=steps></div><div class=log id=log></div></div>
     </div>
     <div class=foot>
-      <div class=prog><div class=prow><span id=sl>Pronto para instalar</span><span id=pct>0%</span></div><div class=track><div id=bar></div></div></div>
       <button class=go id=go onclick=start()>Instalar</button>
+      <div class=prog><div class=prow><span id=sl>Pronto para instalar</span><span id=pct>0%</span></div><div class=track><div id=bar></div></div></div>
     </div>
   </div>
 </div>
 <script>
 var KEY=new URLSearchParams(location.search).get("key")||"";var IP="__IP__";var MODO="instalar";
-function modo(m){MODO=m;document.getElementById('tab-inst').classList.toggle('on',m=='instalar');
- document.getElementById('tab-uni').classList.toggle('on',m=='desinstalar');
+function toggleModo(){modo(MODO=='instalar'?'desinstalar':'instalar');}
+function modo(m){MODO=m;
  document.getElementById('cfg').classList.toggle('hide',m=='desinstalar');
  document.getElementById('pick').classList.toggle('hide',m=='desinstalar');
- document.getElementById('rhead').textContent=m=='instalar'?'Componentes a instalar':'Vai remover todos os serviços e pastas';
+ document.getElementById('uni').classList.toggle('hide',m!='desinstalar');
+ document.getElementById('rhead').textContent=m=='instalar'?'Componentes a instalar':'Remover tudo desta VM';
+ var ml=document.getElementById('modolink');ml.textContent=m=='instalar'?'🗑️ Remover tudo (limpar a VM)':'← Voltar pra instalação';ml.style.color=m=='instalar'?'#e08c8c':'#7fb8ac';
  var g=document.getElementById('go');g.textContent=m=='instalar'?'Instalar':'Remover tudo';g.className=m=='instalar'?'go':'go uni';}
 function sel(){return [].slice.call(document.querySelectorAll('#pick input:checked')).map(function(x){return x.value;});}
 function start(){var go=document.getElementById('go');go.disabled=true;
  if(MODO=='desinstalar'&&!confirm('Remover TODOS os serviços e pastas do framework?')){go.disabled=false;return;}
- document.getElementById('pick').classList.add('hide');document.getElementById('run').classList.remove('hide');
+ document.getElementById('pick').classList.add('hide');document.getElementById('uni').classList.add('hide');document.getElementById('run').classList.remove('hide');
  document.getElementById('rhead').textContent=MODO=='instalar'?'Instalando…':'Removendo…';
  fetch('/start?key='+KEY,{method:'POST',headers:{'Content-Type':'application/json'},
    body:JSON.stringify({modo:MODO,componentes:sel(),token:(document.getElementById('tok')||{}).value||'',
