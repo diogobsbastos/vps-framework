@@ -304,8 +304,13 @@ def cmd_dominio(dom: str, porta_s: str) -> None:
             av.write_text(backup)
         die(f"nginx -t reprovou (revertido): {out[:300]}")
     run(["systemctl", "reload", "nginx"])
-    rc, out = run(["certbot", "--nginx", "-d", dom, "--redirect", "--agree-tos",
-                   "--register-unsafely-without-email", "-n"], timeout=120)
+    rc, out = 1, ""
+    for _tent in range(3):
+        rc, out = run(["certbot", "--nginx", "-d", dom, "--redirect", "--agree-tos",
+                       "--register-unsafely-without-email", "-n"], timeout=120)
+        if rc == 0:
+            break
+        time.sleep(10)  # falha transitoria (DNS do subdominio recem-visivel / hiccup do LE) -> tenta de novo
     print(f"dominio {dom} -> 127.0.0.1:{porta}")
     print("HTTPS: " + ("ok (certbot)" if rc == 0
           else "certbot falhou (DNS aponta pro IP? porta 80 aberta?) — segue em HTTP. " + out[-200:]))
