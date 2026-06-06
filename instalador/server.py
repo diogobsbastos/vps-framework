@@ -653,6 +653,8 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .gouni{flex:none;background:transparent;color:#ef8b8b;border:1px solid rgba(224,107,107,.5);border-radius:10px;padding:11px 18px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
 .gouni:hover{background:rgba(224,107,107,.12);border-color:rgba(224,107,107,.8)}
 .gouni:disabled{opacity:.4;cursor:default}
+.help{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;border:1px solid rgba(255,255,255,.3);color:#9fb0a8;font-size:11px;margin-left:7px;cursor:help;vertical-align:middle}
+.help:hover{border-color:#2bbd9e;color:#2bbd9e}
 .modolink:hover{text-decoration:underline}
 .modal{position:fixed;inset:0;z-index:50;background:rgba(3,8,6,.8);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center}
 .modal.show{display:flex}
@@ -693,6 +695,10 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
       <label class=fld><span>Provedor <small>(rótulo no painel)</small></span><input id=prov type=text value="GCP" placeholder="GCP / Oracle / Hetzner..."></label>
       <label class=fld><span>Domínio <small>(opcional; vazio = acesso por IP)</small></span><input id=dom type=text placeholder="meuapp.duckdns.org"></label>
     </div>
+    <div style="text-align:right;margin-top:16px">
+      <button class=gouni id=removerbtn onclick="removerTudo()"><i class="ti ti-trash"></i> Remover tudo</button>
+      <span class=help title="Desinstala TODOS os serviços e zera esta VM, pra reinstalar do zero. NÃO toca no código do GitHub nem nos backups.">?</span>
+    </div>
   </div>
   <div class=right>
     <div class=rhead><span id=rhead-txt>Componentes a instalar</span><span class=rhactions id=rhactions><a onclick="marcarTodos(1)">MARCAR TODOS</a> · <a onclick="marcarTodos(0)">LIMPAR</a></span></div>
@@ -704,7 +710,6 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
   </div>
   </div>
   <div class=footbar>
-    <button class=gouni id=removerbtn onclick="removerTudo()"><i class="ti ti-trash"></i> Remover tudo</button>
     <div class=prog><div class=prow><span id=sl>Pronto para instalar</span><span id=pct>0%</span></div><div class=track><div id=bar></div></div></div>
     <button class=go id=go onclick=start()>Instalar</button>
   </div>
@@ -786,6 +791,9 @@ class H(BaseHTTPRequestHandler):
             body = pagina().encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
             self.end_headers()
             self.wfile.write(body)
         elif path == "/estado":
