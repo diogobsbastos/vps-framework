@@ -40,7 +40,7 @@ ESTADO = {
 }
 FILA = queue.Queue()       # eventos p/ o SSE
 LOCK = threading.Lock()
-CONFIG = {"token": "", "repo": REPO, "provedor": "VPS", "dominio": ""}  # da tela (/start)
+CONFIG = {"token": "", "repo": REPO, "provedor": "VPS", "dominio": "", "origem": "git", "arquivo_b64": "", "arquivo_nome": ""}  # da tela (/start)
 
 # Ambiente detectado na 1a etapa (o "ping"): tudo se adapta a partir daqui
 DET = {"arch": "", "deb_arch": "", "codinome": "", "python": "", "pg_arch": ""}
@@ -130,7 +130,7 @@ OVERRIDE_DIR = os.path.join(INSTALADOR_DIR, "..", "override")  # arquivos atuali
 APT_DEPS = (
     "build-essential python3-venv python3-dev python3-pip libpq-dev "
     "curl gnupg ca-certificates git nginx certbot python3-certbot-nginx "
-    "rclone ffmpeg fonts-dejavu-core fonts-noto-color-emoji iptables-persistent"
+    "rclone ffmpeg fonts-dejavu-core fonts-noto-color-emoji iptables-persistent unzip"
 )
 
 
@@ -151,6 +151,24 @@ def p_detectar():
 def p_sistema():
     sh("export DEBIAN_FRONTEND=noninteractive; apt-get update -y")
     sh(f"export DEBIAN_FRONTEND=noninteractive; apt-get install -y {APT_DEPS}")
+    arq = CONFIG.get("arquivo_b64") or ""
+    if arq:
+        import base64
+        nome = CONFIG.get("arquivo_nome", "codigo.tar.gz")
+        ext = ".zip" if nome.lower().endswith(".zip") else ".tar.gz"
+        path = f"/tmp/codigo-upload{ext}"
+        with open(path, "wb") as f:
+            f.write(base64.b64decode(arq))
+        os.chmod(path, 0o644)
+        sh(como_user("rm -rf /tmp/codigo-x && mkdir -p /tmp/codigo-x"))
+        if ext == ".zip":
+            sh(como_user(f"unzip -q -o {path} -d /tmp/codigo-x"))
+        else:
+            sh(como_user(f"tar -C /tmp/codigo-x -xzf {path}"))
+        sh(como_user(f"SRC=$(dirname $(find /tmp/codigo-x -maxdepth 4 -name app.py | head -1)); "
+                     f"test -n \"$SRC\" && rm -rf {CLONE} && cp -rf \"$SRC\" {CLONE} && echo \"codigo extraido de: $SRC\""))
+        emit({"tipo": "log", "msg": f"Código instalado do arquivo '{nome}' (sem Git, sem token)."})
+        return
     repo = CONFIG.get("repo") or REPO
     tok = (CONFIG.get("token") or "").strip()
     url = repo
@@ -398,8 +416,39 @@ def p_evolution():
     sh("export DEBIAN_FRONTEND=noninteractive; apt-get install -y nodejs")
     sh(como_user(f"rm -rf {HOME}/evolution-api && git clone --depth 1 "
                  f"https://github.com/EvolutionAPI/evolution-api.git {HOME}/evolution-api"))
-    sh(como_user(f"cd {HOME}/evolution-api && npm install --omit=dev --no-audit --no-fund || npm install --omit=dev --force || true"))
-    emit({"tipo": "log", "msg": "Evolution instalada — configure .env e DATABASE pelo painel depois."})
+    sh(como_user(f"cd {HOME}/evolution-api && npm install --omit=dev --no-audit --no-fund || npm install --force || true"))
+    # chave da API + usuario/senha do banco
+    sh(como_user(f"test -s {HOME}/.evolution_api_key || (openssl rand -hex 16 > {HOME}/.evolution_api_key; chmod 600 {HOME}/.evolution_api_key)"))
+    sh(como_user(f"test -s {HOME}/.evolution_db_pass || (openssl rand -hex 12 > {HOME}/.evolution_db_pass; chmod 600 {HOME}/.evolution_db_pass)"))
+    apikey = "DRY" if DRY else subprocess.run(f"cat {HOME}/.evolution_api_key", shell=True, capture_output=True, text=True).stdout.strip()
+    dbpass = "DRY" if DRY else subprocess.run(f"cat {HOME}/.evolution_db_pass", shell=True, capture_output=True, text=True).stdout.strip()
+    sh(f"sudo -u postgres psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='evolution_user'\" | grep -q 1 || sudo -u postgres psql -c \"CREATE ROLE evolution_user LOGIN PASSWORD '{dbpass}'\"")
+    sh(f"sudo -u postgres psql -c \"ALTER ROLE evolution_user PASSWORD '{dbpass}'\"")
+    sh("sudo -u postgres psql -c \"ALTER DATABASE evolution OWNER TO evolution_user\" || true")
+    env = ("SERVER_TYPE=http\nSERVER_PORT=8080\n"
+           "DATABASE_ENABLED=true\nDATABASE_PROVIDER=postgresql\n"
+           f"DATABASE_CONNECTION_URI=postgresql://evolution_user:{dbpass}@localhost:5432/evolution?schema=public\n"
+           "DATABASE_CONNECTION_CLIENT_NAME=evolution\n"
+           f"AUTHENTICATION_API_KEY={apikey}\n"
+           "CACHE_REDIS_ENABLED=false\nCACHE_LOCAL_ENABLED=true\n")
+    sh(como_user(f"cat > {HOME}/evolution-api/.env <<'ENV'\n{env}ENV"))
+    unit = f"""[Unit]
+Description=Evolution API (Zap Push)
+After=network.target postgresql.service
+[Service]
+User={ALVO_USER}
+WorkingDirectory={HOME}/evolution-api
+ExecStart=/usr/bin/npm run start:prod
+Restart=always
+RestartSec=8
+Environment=NODE_ENV=production
+[Install]
+WantedBy=multi-user.target
+"""
+    sh(f"cat > /etc/systemd/system/evolution.service <<'U'\n{unit}U")
+    sh("systemctl daemon-reload && systemctl enable evolution || true")
+    sh("systemctl start evolution || true")
+    emit({"tipo": "log", "msg": "Evolution: unit + .env + usuario de banco criados. O pareamento do WhatsApp (QR) é feito depois."})
 
 
 def p_worker():
@@ -535,6 +584,8 @@ def d_arquivos():
     sh(como_user(f"rm -rf {HOME}/vps-admin {HOME}/vps-mcp {HOME}/llm-gateway "
                  f"{HOME}/evolution-api {CLONE}"))
     sh(como_user(f"rm -f {HOME}/.vps_* {HOME}/.postgrest_jwt_secret {HOME}/.evolution_api_key 2>/dev/null || true"))
+    # limpa credenciais do GitHub (IMPORTANTE: token nao pode ficar na VM do cliente)
+    sh(como_user(f"rm -f {HOME}/.github_token {HOME}/.git-credentials 2>/dev/null; git config --global --unset credential.helper 2>/dev/null || true"))
 
 
 PASSOS_DESINSTALAR = [
@@ -564,6 +615,9 @@ def orquestrar(selec: list, modo: str, cfg: dict = None):
         CONFIG["repo"] = cfg.get("repo") or REPO
         CONFIG["provedor"] = (cfg.get("provedor") or "VPS").strip()
         CONFIG["dominio"] = (cfg.get("dominio") or "").strip()
+        CONFIG["origem"] = cfg.get("origem", "git")
+        CONFIG["arquivo_b64"] = cfg.get("arquivo_b64", "")
+        CONFIG["arquivo_nome"] = cfg.get("arquivo_nome", "")
     if modo == "desinstalar":
         if not _framework_instalado():
             with LOCK:
@@ -631,7 +685,12 @@ def pagina():
 <link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/3.34.0/iconfont/tabler-icons.min.css">
 <style>
 *,*::before,*::after{box-sizing:border-box}
-html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;font-family:system-ui,Segoe UI,sans-serif}
+html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;font-family:system-ui,Segoe UI,sans-serif;scrollbar-width:thin;scrollbar-color:#2bbd9e rgba(255,255,255,.05)}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:rgba(255,255,255,.04);border-radius:99px}
+::-webkit-scrollbar-thumb{background:linear-gradient(#2bbd9e,#16a085);border-radius:99px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:#3ad6b0}
+*{scrollbar-width:thin;scrollbar-color:#2bbd9e rgba(255,255,255,.05)}
 .bg{position:fixed;inset:0;width:100%;height:100%;z-index:0}
 .shell{position:relative;z-index:2;height:100vh;display:flex;flex-direction:column;padding:26px}
 .main{flex:1;display:flex;gap:22px;min-height:0}
@@ -675,6 +734,10 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
 .help{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;border:1px solid rgba(255,255,255,.3);color:#9fb0a8;font-size:11px;margin-left:7px;cursor:help;vertical-align:middle}
 .help:hover{border-color:#2bbd9e;color:#2bbd9e}
 .modolink:hover{text-decoration:underline}
+.origemtabs{display:flex;gap:6px;margin-bottom:12px}
+.otab{flex:1;padding:8px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:transparent;color:#8fb0a8;font-size:12px;cursor:pointer}
+.otab.on{border-color:#2bbd9e;color:#eafff9;background:rgba(43,189,158,.08)}
+.fld input[type=file]{padding:7px;font-size:12px}
 .modal{position:fixed;inset:0;z-index:50;background:rgba(3,8,6,.8);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center}
 .modal.show{display:flex}
 .modalcard{background:#0d1f1c;border:1px solid rgba(224,107,107,.45);border-radius:16px;padding:26px 28px;max-width:440px;text-align:center;box-shadow:0 22px 60px rgba(0,0,0,.55)}
@@ -709,8 +772,15 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
     <h1>VPS ADMIN</h1>
     <div class=tag>Sua central de servidor · completa e pré-moldada</div>
     <div id=cfg style="margin-top:22px">
-      <label class=fld><span>Repo do código (privado)</span><input id=repo type=text value="https://github.com/diogobsbastos/vps-escola-parque-admin.git"></label>
-      <label class=fld><span>Token do GitHub <small>(clona o repo privado + liga o deploy; fica só na VM)</small></span><input id=tok type=password placeholder="ghp_..."></label>
+      <div class=origemtabs><button type=button class="otab on" id=otab-git onclick="origem('git')">⬇️ Do Git</button><button type=button class=otab id=otab-arq onclick="origem('arquivo')">📁 De arquivo</button></div>
+      <div id=org-git>
+        <label class=fld><span>Repo do código (privado)</span><input id=repo type=text value="https://github.com/diogobsbastos/vps-escola-parque-admin.git"></label>
+        <label class=fld><span>Token do GitHub <small>(clona o repo privado + liga o deploy; fica só na VM)</small></span><input id=tok type=password placeholder="ghp_..."></label>
+      </div>
+      <div id=org-arq class=hide>
+        <label class=fld><span>Arquivo do código <small>(.zip ou .tar.gz — do pendrive)</small></span><input id=arq type=file accept=".zip,.tar.gz,.tgz"></label>
+        <div style="font-size:11px;color:#5f897e;margin:-4px 0 10px">Sem Git, sem token — instala do arquivo local.</div>
+      </div>
       <label class=fld><span>Provedor <small>(rótulo no painel)</small></span><input id=prov type=text value="GCP" placeholder="GCP / Oracle / Hetzner..."></label>
       <label class=fld><span>Domínio <small>(opcional; vazio = acesso por IP)</small></span><input id=dom type=text placeholder="meuapp.duckdns.org"></label>
     </div>
@@ -746,26 +816,30 @@ html,body{margin:0;height:100%;overflow:hidden;background:#081310;color:#dfeae6;
   </div>
 </div>
 <script>
-var KEY=new URLSearchParams(location.search).get("key")||"";var IP="__IP__";var MODO="instalar";var INSTALADO=__INSTALADO__;
+var KEY=new URLSearchParams(location.search).get("key")||"";var IP="__IP__";var MODO="instalar";var INSTALADO=__INSTALADO__;var ORIGEM="git";
 function modo(m){MODO=m;
  document.getElementById('cfg').classList.toggle('hide',m=='desinstalar');
  document.getElementById('pick').classList.toggle('hide',m=='desinstalar');
  document.getElementById('uni').classList.toggle('hide',m!='desinstalar');
  document.getElementById('rhead-txt').textContent=m=='instalar'?'Componentes a instalar':'Remover tudo desta VM';
  var g=document.getElementById('go');g.textContent=m=='instalar'?'Instalar':'Remover tudo';g.className=m=='instalar'?'go':'go uni';}
+function origem(m){ORIGEM=m;document.getElementById("otab-git").classList.toggle("on",m=="git");document.getElementById("otab-arq").classList.toggle("on",m=="arquivo");document.getElementById("org-git").classList.toggle("hide",m=="arquivo");document.getElementById("org-arq").classList.toggle("hide",m=="git");}
 function marcarTodos(v){[].slice.call(document.querySelectorAll('#pick input:not([disabled])')).forEach(function(x){x.checked=!!v;});}
 function sel(){return [].slice.call(document.querySelectorAll('#pick input:checked')).map(function(x){return x.value;});}
 function removerTudo(){document.getElementById('modal').classList.add('show');}
 function fecharModal(){document.getElementById('modal').classList.remove('show');}
 function confirmarRemover(){fecharModal();MODO='desinstalar';document.getElementById('rhead-txt').textContent='Removendo tudo…';start();}
 function start(){var go=document.getElementById('go');go.disabled=true;
- 
  document.getElementById('pick').classList.add('hide');document.getElementById('uni').classList.add('hide');document.getElementById('run').classList.remove('hide');var _ra=document.getElementById('rhactions');if(_ra)_ra.classList.add('hide');var _rb=document.getElementById('removerbtn');if(_rb)_rb.style.display='none';
  document.getElementById('rhead-txt').textContent=MODO=='instalar'?'Instalando…':'Removendo…';
- fetch('/start?key='+KEY,{method:'POST',headers:{'Content-Type':'application/json'},
-   body:JSON.stringify({modo:MODO,componentes:sel(),token:(document.getElementById('tok')||{}).value||'',
-     repo:(document.getElementById('repo')||{}).value||'',provedor:(document.getElementById('prov')||{}).value||'VPS',
-     dominio:(document.getElementById('dom')||{}).value||''})});
+ var payload={modo:MODO,componentes:sel(),origem:ORIGEM,token:(document.getElementById('tok')||{}).value||'',repo:(document.getElementById('repo')||{}).value||'',provedor:(document.getElementById('prov')||{}).value||'VPS',dominio:(document.getElementById('dom')||{}).value||''};
+ if(MODO=='instalar'&&ORIGEM=='arquivo'){var fi=document.getElementById('arq');var f=fi&&fi.files&&fi.files[0];
+   if(!f){alert('Selecione o arquivo do codigo (.zip ou .tar.gz)');go.disabled=false;document.getElementById('run').classList.add('hide');document.getElementById('pick').classList.remove('hide');return;}
+   document.getElementById('sl').textContent='Lendo arquivo '+f.name+'...';
+   var rd=new FileReader();rd.onload=function(){payload.arquivo_b64=String(rd.result).split(',')[1];payload.arquivo_nome=f.name;enviar(payload);};rd.readAsDataURL(f);return;}
+ enviar(payload);}
+function enviar(payload){
+ fetch('/start?key='+KEY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
  var es=new EventSource('/progress?key='+KEY);
  es.onmessage=function(e){var d=JSON.parse(e.data);
    if(d.passos){render(d.passos);}
