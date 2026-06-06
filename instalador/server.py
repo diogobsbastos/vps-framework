@@ -115,7 +115,7 @@ def _detectar_ip_pub():
     except Exception:
         return "SEU-IP"
 IP_PUB = _detectar_ip_pub()
-VERSAO = "v0.11.1"
+VERSAO = "v0.11.2"
 try:
     import datetime as _dt
     try:
@@ -1091,8 +1091,9 @@ function renderSSH(d){CONECTADO=!!(d&&d.conectado);var box=document.getElementBy
  if(CONECTADO){box.innerHTML="<div class=sshrow><span class='sshdot on'></span> Conectado via SSH</div>"+
    "<div class=sshwho>"+d.user+"@"+d.host+"</div>"+
    "<div class=sshbtns><button type=button onclick=abrirConn()>Trocar servidor</button><button type=button class=ghost onclick=desconectar()>Voltar a este servidor</button></div>";}
- else{box.innerHTML="<div class=sshrow><span class='sshdot on'></span> Conectado a <b>este servidor</b> (local)</div>"+
-   "<div class=sshmuted>Você está operando direto na máquina onde o instalador roda.</div>"+
+ else{box.innerHTML="<div class=sshrow><span class='sshdot on'></span> Operando neste servidor</div>"+
+   "<div class=sshwho>"+(d.host||"")+(d.ip?(" · "+d.ip):"")+"</div>"+
+   "<div class=sshmuted>O instalador está rodando dentro dele (sem SSH).</div>"+
    "<button type=button class=gconn onclick=abrirConn() style='margin-top:9px'>🔌 Conectar a outro servidor (SSH)</button>";}}
 function abrirConn(){document.getElementById('sshform').classList.remove('hide');}
 function cancelarConn(){document.getElementById('sshform').classList.add('hide');document.getElementById('connst').innerHTML='';}
@@ -1215,9 +1216,14 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
-            self.wfile.write(json.dumps({"conectado": bool(SSH.get("client")),
-                                         "host": SSH.get("host", ""),
-                                         "user": SSH.get("user", "")}).encode())
+            import socket as _sk
+            _con = bool(SSH.get("client"))
+            self.wfile.write(json.dumps({
+                "conectado": _con,
+                "host": SSH.get("host", "") if _con else _sk.gethostname(),
+                "user": SSH.get("user", "") if _con else "",
+                "ip": SSH.get("host", "") if _con else IP_PUB,
+            }).encode())
         elif path == "/inspecionar":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
