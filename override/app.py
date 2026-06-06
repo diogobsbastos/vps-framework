@@ -1897,18 +1897,27 @@ elif pagina == "🌐 Domínios & Rotas":
         with st.container(border=True):
             st.markdown("**Apontar um domínio novo pra um app deste servidor** "
                         "— 1 clique: cria a rota Nginx + HTTPS (certbot).")
-            _ger_d = {}
+            # Serviços do framework já vêm PRÉ-FABRICADOS (com a porta certa) — automático/didático
+            _ger_d = {
+                "VPS Admin (painel)": 8500,
+                "Evolution (Zap/WhatsApp)": 8080,
+                "ntfy (push)": 2586,
+                "LLM Gateway": 8600,
+                "PostgREST (API do banco)": 3001,
+            }
             try:
                 import subprocess as _spd, json as _jjd
                 _od = _spd.run(["sudo", "-n", "/usr/local/bin/vps_provision", "listar"],
                                capture_output=True, text=True, timeout=15).stdout
-                _ger_d = {k: v.get("porta") for k, v in _jjd.loads(_od).items() if v.get("porta")}
+                _ger_d.update({k: v.get("porta") for k, v in _jjd.loads(_od).items() if v.get("porta")})
             except Exception:
-                _ger_d = {}
+                pass
             with st.form("novo_dominio", border=False):
                 dom_novo = st.text_input("Domínio completo (já apontado pro IP no seu DNS)",
                                          placeholder="www.meusite.com.br")
-                _opts_d = ["(porta manual)"] + [f"{k} · porta {v}" for k, v in _ger_d.items()]
+                st.caption("Os serviços do framework já aparecem com a porta certa. "
+                           "Use '(porta manual)' só pra um app próprio em outra porta.")
+                _opts_d = [f"{k} · porta {v}" for k, v in _ger_d.items()] + ["(porta manual)"]
                 _sel_d = st.selectbox("App de destino", _opts_d)
                 if _sel_d == "(porta manual)":
                     porta_dom = st.number_input("Porta interna do app", 1024, 65535, 3000)
