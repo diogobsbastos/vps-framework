@@ -122,7 +122,7 @@ def _detectar_ip_pub():
     except Exception:
         return "SEU-IP"
 IP_PUB = _detectar_ip_pub()
-VERSAO = "v0.13.11"
+VERSAO = "v0.13.14"
 try:
     import datetime as _dt
     try:
@@ -456,7 +456,7 @@ def p_evolution():
     sh("export DEBIAN_FRONTEND=noninteractive; apt-get install -y nodejs")
     sh(como_user(f"rm -rf {HOME}/evolution-api && git clone --depth 1 "
                  f"https://github.com/EvolutionAPI/evolution-api.git {HOME}/evolution-api"))
-    sh(como_user(f"cd {HOME}/evolution-api && npm install --omit=dev --no-audit --no-fund || npm install --force || true"))
+    sh(como_user(f"cd {HOME}/evolution-api && npm install --no-audit --no-fund || npm install --force || true"))
     # chave da API + usuario/senha do banco
     sh(como_user(f"test -s {HOME}/.evolution_api_key || (openssl rand -hex 16 > {HOME}/.evolution_api_key; chmod 600 {HOME}/.evolution_api_key)"))
     sh(como_user(f"test -s {HOME}/.evolution_db_pass || (openssl rand -hex 12 > {HOME}/.evolution_db_pass; chmod 600 {HOME}/.evolution_db_pass)"))
@@ -472,6 +472,9 @@ def p_evolution():
            f"AUTHENTICATION_API_KEY={apikey}\n"
            "CACHE_REDIS_ENABLED=false\nCACHE_LOCAL_ENABLED=true\n")
     sh(como_user(f"cat > {HOME}/evolution-api/.env <<'ENV'\n{env}ENV"))
+    # compila TS -> dist/ (sem isso o "node dist/main" nao existe e o servico crasha) + migrations
+    sh(como_user(f"cd {HOME}/evolution-api && npm run build"))
+    sh(como_user(f"cd {HOME}/evolution-api && (npm run db:generate || true) && (npm run db:deploy || true)"))
     unit = f"""[Unit]
 Description=Evolution API (Zap Push)
 After=network.target postgresql.service
@@ -891,6 +894,30 @@ def _montar_plano(selec, modo):
     return [(c[0], c[1], c[2], MAPA_PASSO[c[0]]) for c in sel]
 
 
+def _filtrar_instalados(plano, log=True):
+    """No modo instalar, tira do plano os componentes ja 'ativo' (instalados+rodando).
+    detectar/sistema (sem status) sempre permanecem, pois os outros dependem deles."""
+    ids = [p[0] for p in plano if p[0] in STATUS_COMP]
+    if not ids:
+        return plano
+    home = _home()
+    pares = []
+    for i in ids:
+        tp, al = STATUS_COMP[i]
+        if al.startswith("~"):
+            al = home + al[1:]
+        pares.append((tp, al))
+    sts = dict(zip(ids, _status_lote(pares)))
+    novo = []
+    for (i, l, ic, fn) in plano:
+        if sts.get(i) == "ativo":
+            if log:
+                emit({"tipo": "log", "msg": f"{l}: ja instalado e ativo - pulando."})
+            continue
+        novo.append((i, l, ic, fn))
+    return novo
+
+
 # ---------- P2: instalacao remota por SSH (o PC vira orquestrador) ----------
 _SFTP_IGN = {".git", "__pycache__", ".venv", "_tmp_extract"}
 
@@ -935,11 +962,14 @@ def instalar_remoto(selec, modo, cfg=None):
     host = SSH.get("host") or ""
 
     # plano local ANTES de tudo (pro front montar a lista via snapshot do /progress)
+    _plano = _montar_plano(selec, modo)
+    if modo == "instalar":
+        _plano = _filtrar_instalados(_plano, log=False)
     with LOCK:
         ESTADO["fase"] = "rodando"
         ESTADO["modo"] = modo
         ESTADO["passos"] = [{"id": i, "label": l, "icon": ic, "status": "pendente"}
-                            for (i, l, ic, _) in _montar_plano(selec, modo)]
+                            for (i, l, ic, _) in _plano]
         ESTADO["pct"] = 0
     emit({"tipo": "reset"})
 
@@ -1051,6 +1081,8 @@ def orquestrar(selec: list, modo: str, cfg: dict = None):
         emit({"tipo": "fim", "fase": "ok"})
         return
     plano = _montar_plano(selec, modo)
+    if modo == "instalar":
+        plano = _filtrar_instalados(plano)
 
     with LOCK:
         ESTADO["fase"] = "rodando"
@@ -1174,6 +1206,7 @@ def pagina():
     return """<!DOCTYPE html><html lang=pt-br><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
 <title>VPS Admin · Instalador</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNyIgZmlsbD0iIzBjMWYxYyIvPjxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzNhZDZiMCIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiPjxyZWN0IHg9IjYiIHk9IjciIHdpZHRoPSIyMCIgaGVpZ2h0PSI3IiByeD0iMiIvPjxyZWN0IHg9IjYiIHk9IjE4IiB3aWR0aD0iMjAiIGhlaWdodD0iNyIgcng9IjIiLz48bGluZSB4MT0iMTMiIHkxPSIxMC41IiB4Mj0iMjIuNSIgeTI9IjEwLjUiLz48bGluZSB4MT0iMTMiIHkxPSIyMS41IiB4Mj0iMjIuNSIgeTI9IjIxLjUiLz48L2c+PGNpcmNsZSBjeD0iOS41IiBjeT0iMTAuNSIgcj0iMS40IiBmaWxsPSIjM2FkNmIwIi8+PGNpcmNsZSBjeD0iOS41IiBjeT0iMjEuNSIgcj0iMS40IiBmaWxsPSIjM2FkNmIwIi8+PC9zdmc+">
 <link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/3.34.0/iconfont/tabler-icons.min.css">
 <style>
 *,*::before,*::after{box-sizing:border-box}
